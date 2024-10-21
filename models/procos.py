@@ -160,13 +160,13 @@ class EstimatorCV():
 
         self.Amount += onehot.sum(0)
 
-    def update_kappa(self, class_frequencies, kappa_min=1.0, kappa_max=1e5, beta=0.5,):
+    def update_kappa(self, class_frequencies, kappa_min=1.0, kappa_max=1e5, beta=0.5, smooth_head=0.1, smooth_tail=0.01,
+                     shape='concave'):
         class_frequencies = class_frequencies.to(self.device)
         R = torch.linalg.norm(self.Ave, dim=1)
 
         initial_kappa = self.feature_num * R / (1 - R ** 2)
-        initial_kappa[initial_kappa > kappa_max] = kappa_max
-        initial_kappa[initial_kappa < 0] = kappa_max
+        initial_kappa = torch.clamp(initial_kappa, min=kappa_min, max=kappa_max)
 
         N_y = class_frequencies
         N_min = N_y.min()
@@ -175,12 +175,22 @@ class EstimatorCV():
         if N_max == N_min:
             adjustment_factor = torch.ones_like(N_y)
         else:
-            # adjustment_factor = (1 - (N_y - N_min) / (N_max - N_min)).pow(beta)
-            log_scaled_frequencies = torch.log1p(N_y - N_min)
-            adjustment_factor = (1 - (log_scaled_frequencies - log_scaled_frequencies.min()) /
-                                 (log_scaled_frequencies.max() - log_scaled_frequencies.min())).pow(beta)
+            if shape == 'concave':
+                adjustment_factor = 1 - torch.sin((N_y - N_min) * torch.pi / (2 * (N_max - N_min)))
+            elif shape == 'linear':
+                adjustment_factor = 1 - (N_y - N_min) / (N_max - N_min)
+            elif shape == 'convex':
+                adjustment_factor = 1 - torch.sin(1.5 * torch.pi + (N_y - N_min) * torch.pi / (2 * (N_max - N_min)))
+            elif shape == 'exp':
+                adjustment_factor = (1 - (N_y - N_min) / (N_max - N_min)).pow(beta)
+            elif shape == 'log':
+                log_scaled_frequencies = torch.log1p(N_y - N_min)
+                adjustment_factor = (1 - (log_scaled_frequencies - log_scaled_frequencies.min()) /
+                                     (log_scaled_frequencies.max() - log_scaled_frequencies.min())).pow(beta)
+            else:
+                raise ValueError(f"Unknown shape: {shape}")
 
-        adjusted_kappa = kappa_min + (initial_kappa - kappa_min) * adjustment_factor
+        adjusted_kappa = smooth_tail + (smooth_head - smooth_tail) * (initial_kappa - kappa_min) * adjustment_factor
         self.kappa = torch.clamp(adjusted_kappa, min=kappa_min, max=kappa_max)
 
         nu, _ = miller_recurrence(torch.tensor(self.feature_num / 2 - 1).int().to(self.kappa.device),
