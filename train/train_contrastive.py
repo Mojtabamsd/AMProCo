@@ -547,7 +547,7 @@ def train_imagenet_inatural(rank, world_size, config, console):
     device = torch.device(f"cuda:{rank}" if torch.cuda.is_available() else "cpu")
     console.info(f"Running on:  {device}")
 
-    console.device = device
+    config.device = device
 
     # number of classes for imagenet or inat
     if config.training_contrastive.dataset == 'inat':
