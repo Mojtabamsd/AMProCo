@@ -547,18 +547,21 @@ def train_imagenet_inatural(rank, world_size, config, console):
     device = torch.device(f"cuda:{rank}" if torch.cuda.is_available() else "cpu")
     console.info(f"Running on:  {device}")
 
+    console.device = device
+
     # number of classes for imagenet or inat
     if config.training_contrastive.dataset == 'inat':
         config.sampling.num_class = 8142
 
         txt_train = f'iNaturalist18/iNaturalist18_train.txt'
+        txt_val = f'iNaturalist18/iNaturalist18_val.txt'
         normalize = transforms.Normalize((0.466, 0.471, 0.380), (0.195, 0.194, 0.192))
 
     elif config.training_contrastive.dataset == 'imagenet':
         config.sampling.num_class = 1000
 
         txt_train = f'ImageNet_LT/ImageNet_LT_train.txt'
-        # txt_val = f'ImageNet_LT/ImageNet_LT_val.txt'
+        txt_val = f'ImageNet_LT/ImageNet_LT_val.txt'
         normalize = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
 
     # Define data transformations
@@ -618,39 +621,47 @@ def train_imagenet_inatural(rank, world_size, config, console):
     ])
 
     # config.input_path = ''
-    # val_dataset = ImageNetLT(
-    #     root=config.input_path,
-    #     txt=txt_val,
-    #     transform=transform_val, train=False)
 
     if config.training_contrastive.dataset == 'inat':
         train_dataset = INaturalist(
             root=config.input_folder_train,
             txt=txt_train,
             transform=transform_train)
+        val_dataset = INaturalist(
+            root=config.input_folder_train,
+            txt=txt_val,
+            transform=transform_val, train=False)
+
     elif config.training_contrastive.dataset == 'imagenet':
         train_dataset = ImageNetLT(
             root=config.input_folder_train,
             txt=txt_train,
             transform=transform_train)
+        val_dataset = ImageNetLT(
+            root=config.input_folder_train,
+            txt=txt_val,
+            transform=transform_val, train=False)
 
     console.info(f'===> Training data length {len(train_dataset)}')
-    # console.info(f'===> Validation data length {len(val_dataset)}')
+    console.info(f'===> Validation data length {len(val_dataset)}')
 
     if is_distributed:
-        sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
+        sampler_train = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
+        # sampler_val = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank)
+        sampler_val = None
     else:
-        sampler = None
+        sampler_train = None
+        sampler_val = None
 
     train_loader = DataLoader(train_dataset,
                               batch_size=config.training_contrastive.batch_size,
-                              sampler=sampler,
+                              sampler=sampler_train,
                               shuffle=(not is_distributed),
                               num_workers=config.training_contrastive.num_workers)
 
-    # val_loader = DataLoader(
-    #     val_dataset, batch_size=config.training_contrastive.batch_size, shuffle=False,
-    #     num_workers=config.training_contrastive.num_workers, pin_memory=True, sampler=val_sampler)
+    val_loader = DataLoader(
+        val_dataset, batch_size=config.training_contrastive.batch_size, shuffle=False,
+        num_workers=config.training_contrastive.num_workers, pin_memory=True, sampler=sampler_val)
 
     model = resnext.Model(name=config.training_contrastive.architecture_type, num_classes=config.sampling.num_class,
                           feat_dim=config.training_contrastive.feat_dim,
@@ -668,7 +679,7 @@ def train_imagenet_inatural(rank, world_size, config, console):
 
     if config.training_contrastive.path_pretrain:
         pth_files = [file for file in os.listdir(config.training_path) if
-                     file.endswith('.pth') and file != 'model_weights_final.pth']
+                     file.endswith('.pth') and file != 'model_weights_best.pth']
         epochs = [int(file.split('_')[-1].split('.')[0]) for file in pth_files]
         latest_epoch = max(epochs)
         latest_pth_file = f"model_weights_epoch_{latest_epoch}.pth"
@@ -723,9 +734,15 @@ def train_imagenet_inatural(rank, world_size, config, console):
                                 momentum=config.training_contrastive.momentum,
                                 weight_decay=config.training_contrastive.weight_decay)
 
+    if config.training_contrastive.path_pretrain:
+        criterion_scl.reload_memory()
+
     ce_loss_all_avg = []
     scl_loss_all_avg = []
     top1_avg = []
+    top1_val_avg = []
+    best_acc1 = 0.0
+    best_many, best_med, best_few = 0.0, 0.0, 0.0
 
     # Training loop
     for epoch in range(latest_epoch, config.training_contrastive.num_epoch):
@@ -736,8 +753,8 @@ def train_imagenet_inatural(rank, world_size, config, console):
         if hasattr(criterion_scl, "_hook_before_epoch"):
             criterion_scl._hook_before_epoch()
 
-        if is_distributed and sampler is not None:
-            sampler.set_epoch(epoch)
+        if is_distributed and sampler_train is not None:
+            sampler_train.set_epoch(epoch)
 
         adjust_lr(optimizer, epoch, config)
 
@@ -813,15 +830,15 @@ def train_imagenet_inatural(rank, world_size, config, console):
             # from tools.image import save_img
             # save_img(images, batch_idx, epoch, training_path/"augmented")
 
-            if batch_idx % 20 == 0:
-                output = ('Epoch: [{0}][{1}/{2}] \t'
-                          'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                          'CE_Loss {ce_loss.val:.4f} ({ce_loss.avg:.4f})\t'
-                          'SCL_Loss {scl_loss.val:.4f} ({scl_loss.avg:.4f})\t'
-                          'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-                    epoch, batch_idx, len(train_loader), batch_time=batch_time,
-                    ce_loss=ce_loss_all, scl_loss=scl_loss_all, top1=top1, ))  # TODO
-                print(output)
+            # if batch_idx % 20 == 0:
+            #     output = ('Epoch: [{0}][{1}/{2}] \t'
+            #               'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+            #               'CE_Loss {ce_loss.val:.4f} ({ce_loss.avg:.4f})\t'
+            #               'SCL_Loss {scl_loss.val:.4f} ({scl_loss.avg:.4f})\t'
+            #               'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
+            #         epoch, batch_idx, len(train_loader), batch_time=batch_time,
+            #         ce_loss=ce_loss_all, scl_loss=scl_loss_all, top1=top1, ))  # TODO
+            #     print(output)
 
         console.info(f"CE loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {ce_loss_all.avg:.4f} ")
         console.info(f"SCL loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {scl_loss_all.avg:.4f} ")
@@ -835,17 +852,31 @@ def train_imagenet_inatural(rank, world_size, config, console):
         plot_loss(scl_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='SCL_loss.png')
         plot_loss(top1_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='ACC.png')
 
-        # save intermediate weight
-        if (epoch + 1) % config.training_contrastive.save_model_every_n_epoch == 0:
-            # Save the model weights
-            saved_weights = f'model_weights_epoch_{epoch + 1}.pth'
-            saved_weights_file = os.path.join(config.training_path, saved_weights)
-
-            console.info(f"Model weights saved to {saved_weights_file}")
-            torch.save(model.state_dict(), saved_weights_file)
-
         if is_distributed:
             dist.barrier()
+
+        if rank == 0:
+            acc1, many, med, few = validate(train_loader, val_loader, model, criterion_ce, config, console)
+
+            is_best = acc1 > best_acc1
+            best_acc1 = max(acc1, best_acc1)
+            if is_best:
+                best_many = many
+                best_med = med
+                best_few = few
+                console.info('Epoch: {:.3f}, Best Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: '
+                             '{:.3f}'.format(epoch, best_acc1, best_many, best_med, best_few))
+
+                # Save the model weights
+                saved_weights_best = f'model_weights_best.pth'
+                saved_weights_file_best = os.path.join(config.training_path, saved_weights_best)
+
+                console.info(f"Model weights saved to {saved_weights_file_best}")
+                torch.save(model.state_dict(), saved_weights_file_best)
+
+            top1_val_avg.append(acc1)
+            plot_loss(top1_val_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                      name='ACC_validation.png')
 
     if rank == 0:
         # Create a plot of the loss values
@@ -854,7 +885,7 @@ def train_imagenet_inatural(rank, world_size, config, console):
         plot_loss(top1_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='ACC.png')
 
         # Save the model's state dictionary to a file
-        saved_weights = "model_weights_final.pth"
+        saved_weights = f'model_weights_epoch_{config.training_contrastive.num_epoch}.pth'
         saved_weights_file = os.path.join(config.training_path, saved_weights)
 
         torch.save(model.state_dict(), saved_weights_file)
@@ -865,6 +896,11 @@ def train_imagenet_inatural(rank, world_size, config, console):
         dist.barrier()
 
     if rank == 0:
+        # load best model
+        console.info("Best Model loaded from ", saved_weights_file_best)
+        model.load_state_dict(torch.load(saved_weights_file_best, map_location=device))
+        model.to(device)
+
         if config.training_contrastive.dataset == 'inat':
             txt_test = f'iNaturalist18/iNaturalist18_val.txt'
             test_dataset = INaturalist(
@@ -952,6 +988,53 @@ def train_imagenet_inatural(rank, world_size, config, console):
         console.info('************* Evaluation Report *************')
         console.info(report)
         console.save_log(config.training_path)
+
+
+def validate(train_loader, val_loader, model, criterion_ce, config, console):
+
+    model.eval()
+    batch_time = AverageMeter('Time', ':6.3f')
+    ce_loss_all = AverageMeter('CE_Loss', ':.4e')
+    top1 = AverageMeter('Acc@1', ':6.2f')
+
+    total_logits = torch.empty((0, config.sampling.num_class)).to(config.device)
+    total_labels = torch.empty(0, dtype=torch.long).to(config.device)
+
+    with torch.no_grad():
+        end = time.time()
+        for i, data in enumerate(val_loader):
+            images, labels = data
+            images, labels = images.to(config.device), labels.to(config.device)
+
+            _, ce_logits, _ = model(images)
+            logits = ce_logits
+
+            total_logits = torch.cat((total_logits, logits))
+            total_labels = torch.cat((total_labels, labels))
+
+            batch_time.update(time.time() - end)
+
+        ce_loss = criterion_ce(total_logits, total_labels)
+        acc1 = accuracy(total_logits, total_labels, topk=(1,))
+
+        ce_loss_all.update(ce_loss.item(), 1)
+        top1.update(acc1[0].item(), 1)
+
+        # if tf_writer is not None:
+        #     tf_writer.add_scalar('CE loss/val', ce_loss_all.avg, epoch)
+        #     tf_writer.add_scalar('acc/val_top1', top1.avg, epoch)
+
+        all_probs, all_preds = F.softmax(total_logits, dim=1).max(dim=1)
+        many_acc_top1, median_acc_top1, low_acc_top1 = shot_acc(all_preds, total_labels, train_loader,
+                                                                acc_per_cls=False)
+        acc1 = top1.avg
+        many = many_acc_top1 * 100
+        med = median_acc_top1 * 100
+        few = low_acc_top1 * 100
+        console.info(
+            'Validation: Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: {:.3f}'.format(acc1, many, med, few))
+
+        return acc1, many, med, few
 
 
 class AverageMeter(object):
