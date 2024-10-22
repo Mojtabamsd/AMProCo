@@ -160,8 +160,7 @@ class EstimatorCV():
 
         self.Amount += onehot.sum(0)
 
-    def update_kappa(self, class_frequencies, kappa_min=1.0, kappa_max=1e5, beta=0.5, smooth_head=0.1, smooth_tail=0.01,
-                     shape='concave'):
+    def update_kappa(self, class_frequencies, kappa_min=1.0, kappa_max=1e5, beta=0.5, shape='concave'):
         class_frequencies = class_frequencies.to(self.device)
         R = torch.linalg.norm(self.Ave, dim=1)
 
@@ -190,7 +189,8 @@ class EstimatorCV():
             else:
                 raise ValueError(f"Unknown shape: {shape}")
 
-        adjusted_kappa = smooth_tail + (smooth_head - smooth_tail) * (initial_kappa - kappa_min) * adjustment_factor
+        adjusted_kappa = kappa_min + (initial_kappa - kappa_min) * adjustment_factor
+
         self.kappa = torch.clamp(adjusted_kappa, min=kappa_min, max=kappa_max)
 
         nu, _ = miller_recurrence(torch.tensor(self.feature_num / 2 - 1).int().to(self.kappa.device),

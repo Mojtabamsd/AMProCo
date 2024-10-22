@@ -274,16 +274,6 @@ def train_uvp(rank, world_size, config, console):
                                 momentum=config.training_contrastive.momentum,
                                 weight_decay=config.training_contrastive.weight_decay)
 
-    # if config.training_contrastive.num_epoch == 200:
-    #     config.training_contrastive.schedule = [160, 180]
-    #     config.training_contrastive.warmup_epochs = 5
-    # elif config.training_contrastive.num_epoch == 400:
-    #     config.training_contrastive.schedule = [360, 380]
-    #     config.training_contrastive.warmup_epochs = 10
-    # else:
-    #     config.training_contrastive.schedule = [config.training_contrastive.num_epoch * 0.8, config.training_contrastive.num_epoch * 0.9]
-    #     config.training_contrastive.warmup_epochs = 5 * config.training_contrastive.num_epoch // 200
-
     ce_loss_all_avg = []
     scl_loss_all_avg = []
     top1_avg = []
@@ -733,16 +723,6 @@ def train_imagenet_inatural(rank, world_size, config, console):
                                 momentum=config.training_contrastive.momentum,
                                 weight_decay=config.training_contrastive.weight_decay)
 
-    if config.training_contrastive.num_epoch == 200:
-        config.training_contrastive.schedule = [160, 180]
-        config.training_contrastive.warmup_epochs = 5
-    elif config.training_contrastive.num_epoch == 400:
-        config.training_contrastive.schedule = [360, 380]
-        config.training_contrastive.warmup_epochs = 10
-    else:
-        config.training_contrastive.schedule = [config.training_contrastive.num_epoch * 0.8, config.training_contrastive.num_epoch * 0.9]
-        config.training_contrastive.warmup_epochs = 5 * config.training_contrastive.num_epoch // 200
-
     ce_loss_all_avg = []
     scl_loss_all_avg = []
     top1_avg = []
@@ -800,8 +780,8 @@ def train_imagenet_inatural(rank, world_size, config, console):
 
                 contrast_logits = (contrast_logits1 + contrast_logits2) / 2
 
-                # scl_loss = (criterion_ce(contrast_logits1, mini_labels) + criterion_ce(contrast_logits2, mini_labels)) / 2
-                scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
+                scl_loss = (criterion_ce(contrast_logits1, mini_labels) + criterion_ce(contrast_logits2, mini_labels)) / 2
+                # scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
                 ce_loss = criterion_ce(ce_logits, mini_labels)
 
                 alpha = 1
@@ -1002,10 +982,9 @@ class AverageMeter(object):
 def adjust_lr(optimizer, epoch, config):
     """Decay the learning rate based on schedule"""
     lr = config.training_contrastive.learning_rate
-    cos = False
     if epoch < config.training_contrastive.warmup_epochs:
-        lr = lr / config.training_contrastive.warmup_epochs  * (epoch + 1)
-    elif cos:  # cosine lr schedule
+        lr = lr / config.training_contrastive.warmup_epochs * (epoch + 1)
+    elif config.training_contrastive.cos:  # cosine lr schedule
         lr *= 0.5 * (1. + math.cos(math.pi * (epoch - config.training_contrastive.warmup_epochs + 1) /
                                    (config.training_contrastive.num_epoch - config.training_contrastive.warmup_epochs + 1)))
     else:  # stepwise lr schedule
