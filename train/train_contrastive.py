@@ -143,6 +143,8 @@ def train_uvp(rank, world_size, config, console):
     device = torch.device(f"cuda:{rank}" if torch.cuda.is_available() else "cpu")
     console.info(f"Running on:  {device}")
 
+    config.device = device
+
     # Define data transformations
     randaug_m = 10
     randaug_n = 2
@@ -337,7 +339,7 @@ def train_uvp(rank, world_size, config, console):
                 best_med = med
                 best_few = few
                 console.info('Epoch: {:.3f}, Best Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: '
-                             '{:.3f}'.format(epoch, best_acc1, best_many, best_med, best_few))
+                             '{:.3f}'.format(round(epoch+1), best_acc1, best_many, best_med, best_few))
 
                 # Save the model weights
                 saved_weights_best = f'model_weights_best.pth'
@@ -679,7 +681,7 @@ def train_imagenet_inatural(rank, world_size, config, console):
                 best_med = med
                 best_few = few
                 console.info('Epoch: {:.3f}, Best Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: '
-                             '{:.3f}'.format(epoch, best_acc1, best_many, best_med, best_few))
+                             '{:.3f}'.format(round(epoch+1), best_acc1, best_many, best_med, best_few))
 
                 # Save the model weights
                 saved_weights_best = f'model_weights_best.pth'
