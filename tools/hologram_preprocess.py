@@ -7,7 +7,10 @@ import argparse
 def rescale_image(image):
     image = np.array(image).astype(np.float32)
     min_val, max_val = image.min(), image.max()
-    scaled_image = 255 * (image - min_val) / (max_val - min_val)
+    if max_val == min_val:
+        scaled_image = np.full(image.shape, 255 if max_val > 0 else 0, dtype=np.uint8)
+    else:
+        scaled_image = 255 * (image - min_val) / (max_val - min_val)
     return Image.fromarray(scaled_image.astype(np.uint8))
 
 
@@ -26,6 +29,7 @@ def process_images(source_folder, dest_folder):
 
                     dest_file_path = os.path.join(dest_dir, f'{os.path.splitext(file)[0]}.bmp')
                     scaled_img.save(dest_file_path)
+                    print(f"Processed and saved: {dest_file_path}")
 
 
 if __name__ == '__main__':
