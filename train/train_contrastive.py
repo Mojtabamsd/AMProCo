@@ -53,21 +53,23 @@ def train_contrastive(config_path, input_path, output_path):
     console.info("Training started ...")
 
     sampled_images_csv_filename = "sampled_images.csv"
+    sampled_images_csv_filename_val = "sampled_images_val.csv"
     input_csv_train = input_folder_train / sampled_images_csv_filename
     input_csv_test = input_folder_test / sampled_images_csv_filename
+    input_csv_val = input_folder_test / sampled_images_csv_filename_val
 
     config.input_folder_train = str(input_folder_train)
     config.input_folder_test = str(input_folder_test)
     config.input_csv_train = str(input_csv_train)
     config.input_csv_test = str(input_csv_test)
+    config.input_csv_val = str(input_csv_val)
 
-    if not input_csv_train.is_file():
-        console.info("Label not provided for training")
-        input_csv_train = None
+    if config.training_contrastive.dataset == 'uvp':
+        if not input_csv_train.is_file():
+            console.info("Label not provided for training")
 
-    if not input_csv_test.is_file():
-        console.info("Label not provided for testing")
-        input_csv_test = None
+        if not input_csv_test.is_file():
+            console.info("Label not provided for testing")
 
     if config.training_contrastive.path_pretrain:
         training_path = Path(config.training_contrastive.path_pretrain)
@@ -193,6 +195,13 @@ def train_uvp(rank, world_size, config, console):
                                phase=config.phase,
                                gray=config.training_contrastive.gray)
 
+    val_dataset = UvpDataset(root_dir=config.input_folder_test,
+                             num_class=config.sampling.num_class,
+                             csv_file=config.input_csv_val,
+                             transform=transform_val,
+                             phase='test',
+                             gray=config.training_contrastive.gray)
+
     class_counts = train_dataset.data_frame['label'].value_counts().sort_index().tolist()
     total_samples = sum(class_counts)
     class_weights = [total_samples / (config.sampling.num_class * count) for count in class_counts]
@@ -200,15 +209,23 @@ def train_uvp(rank, world_size, config, console):
     class_weights_tensor_normalize = class_weights_tensor / class_weights_tensor.sum()
 
     if is_distributed:
-        sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
+        sampler_train = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
+        sampler_val = None
     else:
-        sampler = None
+        sampler_train = None
+        sampler_val = None
 
     train_loader = DataLoader(train_dataset,
                               batch_size=config.training_contrastive.batch_size,
-                              sampler=sampler,
+                              sampler=sampler_train,
                               shuffle=(not is_distributed),
                               num_workers=config.training_contrastive.num_workers)
+
+    val_loader = DataLoader(val_dataset,
+                            batch_size=config.training_contrastive.batch_size,
+                            shuffle=False,
+                            num_workers=config.training_contrastive.num_workers,
+                            sampler=sampler_val)
 
     model = resnext.Model(name=config.training_contrastive.architecture_type, num_classes=config.sampling.num_class,
                           feat_dim=config.training_contrastive.feat_dim,
@@ -223,6 +240,9 @@ def train_uvp(rank, world_size, config, console):
     # test memory usage
     # console.info(memory_usage(config, model, device))
 
+    if world_size > 1:
+        model = DDP(model, device_ids=[rank])
+
     if config.training_contrastive.path_pretrain:
         pth_files = [file for file in os.listdir(config.training_path) if
                      file.endswith('.pth') and file != 'model_weights_best.pth']
@@ -231,18 +251,18 @@ def train_uvp(rank, world_size, config, console):
         latest_pth_file = f"model_weights_epoch_{latest_epoch}.pth"
 
         saved_weights_file = os.path.join(config.training_path, latest_pth_file)
-
         state_dict = torch.load(saved_weights_file, map_location=device)
-        new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+
+        if world_size > 1:
+            new_state_dict = state_dict
+        else:
+            new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
 
         console.info("Model loaded from ", saved_weights_file)
         model.load_state_dict(new_state_dict, strict=True)
         model.to(device)
     else:
         latest_epoch = 0
-
-    if world_size > 1:
-        model = DDP(model, device_ids=[rank])
 
     # Loss criterion and optimizer
     if config.training_contrastive.loss == 'proco':
@@ -280,237 +300,105 @@ def train_uvp(rank, world_size, config, console):
     ce_loss_all_avg = []
     scl_loss_all_avg = []
     top1_avg = []
+    top1_val_avg = []
+    best_acc1 = 0.0
 
     # Training loop
     for epoch in range(latest_epoch, config.training_contrastive.num_epoch):
-        model.train()
-        running_loss = 0.0
-        running_corrects = 0
 
-        if hasattr(criterion_scl, "_hook_before_epoch"):
-            criterion_scl._hook_before_epoch()
-
-        if is_distributed and sampler is not None:
-            sampler.set_epoch(epoch)
+        if is_distributed and sampler_train is not None:
+            sampler_train.set_epoch(epoch)
 
         adjust_lr(optimizer, epoch, config)
 
-        batch_time = AverageMeter('Time', ':6.3f')
-        ce_loss_all = AverageMeter('CE_Loss', ':.4e')
-        scl_loss_all = AverageMeter('SCL_Loss', ':.4e')
-        top1 = AverageMeter('Acc@1', ':6.2f')
-
-        end = time.time()
-
-        for batch_idx, (images, labels, _) in enumerate(train_loader):
-            batch_size = labels.shape[0]
-            labels = labels.to(device)
-
-            mini_batch_size = batch_size // config.training_contrastive.accumulation_steps
-
-            images_0_mini_batches = torch.split(images[0], mini_batch_size)
-            images_1_mini_batches = torch.split(images[1], mini_batch_size)
-            images_2_mini_batches = torch.split(images[2], mini_batch_size)
-            labels_mini_batches = torch.split(labels, mini_batch_size)
-
-            optimizer.zero_grad()
-
-            aggregated_logits = []
-
-            for i in range(len(images_0_mini_batches)):
-                mini_images = torch.cat([images_0_mini_batches[i], images_1_mini_batches[i], images_2_mini_batches[i]],
-                                        dim=0)
-                mini_labels = labels_mini_batches[i]
-                mini_images, mini_labels = mini_images.to(device), mini_labels.to(device)
-
-                feat_mlp, ce_logits, _ = model(mini_images)
-                _, f2, f3 = torch.split(feat_mlp, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
-                ce_logits, _, __ = torch.split(ce_logits, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
-
-                contrast_logits1 = criterion_scl(f2, mini_labels)
-                contrast_logits2 = criterion_scl(f3, mini_labels)
-                contrast_logits1, contrast_logits2 = contrast_logits1.to(device), contrast_logits2.to(device)
-
-                contrast_logits = (contrast_logits1 + contrast_logits2) / 2
-
-                # scl_loss = (criterion_ce(contrast_logits1, mini_labels) + criterion_ce(contrast_logits2, mini_labels)) / 2
-                scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
-                ce_loss = criterion_ce(ce_logits, mini_labels)
-
-                alpha = 1
-                logits = ce_logits + alpha * contrast_logits
-                loss = ce_loss + alpha * scl_loss
-
-                # Accumulate gradients
-                loss.backward()
-                aggregated_logits.append(logits)
-
-            optimizer.step()
-            aggregated_logits = torch.cat(aggregated_logits, dim=0)
-            aggregated_logits = aggregated_logits.to(device)
-
-            ce_loss_all.update(ce_loss.item(), batch_size)
-            scl_loss_all.update(scl_loss.item(), batch_size)
-
-            acc1 = accuracy(aggregated_logits, labels, topk=(1,))
-            top1.update(acc1[0].item(), batch_size)
-
-            # optimizer.zero_grad()
-            # loss.backward()
-            # optimizer.step()
-
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            # # for debug
-            # from tools.image import save_img
-            # save_img(images, batch_idx, epoch, training_path/"augmented")
-
-            if batch_idx % 20 == 0:
-                output = ('Epoch: [{0}][{1}/{2}] \t'
-                          'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                          'CE_Loss {ce_loss.val:.4f} ({ce_loss.avg:.4f})\t'
-                          'SCL_Loss {scl_loss.val:.4f} ({scl_loss.avg:.4f})\t'
-                          'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-                    epoch, batch_idx, len(train_loader), batch_time=batch_time,
-                    ce_loss=ce_loss_all, scl_loss=scl_loss_all, top1=top1, ))  # TODO
-                print(output)
-
-        console.info(f"CE loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {ce_loss_all.avg:.4f} ")
-        console.info(f"SCL loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {scl_loss_all.avg:.4f} ")
-        console.info(f"acc train top1 [{epoch + 1}/{config.training_contrastive.num_epoch}] - Acc: {top1.avg:.4f} ")
+        ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
+                                                config, console)
 
         ce_loss_all_avg.append(ce_loss_all.avg)
         scl_loss_all_avg.append(scl_loss_all.avg)
         top1_avg.append(top1.avg)
 
-        plot_loss(ce_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='CE_loss.png')
-        plot_loss(scl_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='SCL_loss.png')
+        plot_loss(ce_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                  name='CE_loss.png')
+        plot_loss(scl_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                  name='SCL_loss.png')
         plot_loss(top1_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='ACC.png')
-
-        # save intermediate weight
-        if (epoch + 1) % config.training_contrastive.save_model_every_n_epoch == 0:
-            # Save the model weights
-            saved_weights = f'model_weights_epoch_{epoch + 1}.pth'
-            saved_weights_file = os.path.join(config.training_path, saved_weights)
-
-            console.info(f"Model weights saved to {saved_weights_file}")
-            torch.save(model.state_dict(), saved_weights_file)
 
         if is_distributed:
             dist.barrier()
 
-    # if rank == 0:
-    #     # Create a plot of the loss values
-    #     plot_loss(ce_loss_all_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='CE_loss.png')
-    #     plot_loss(scl_loss_all_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='SCL_loss.png')
-    #     plot_loss(top1_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='ACC.png')
-    #
-    #     # Save the model's state dictionary to a file
-    #     saved_weights = "model_weights_final.pth"
-    #     saved_weights_file = os.path.join(config.training_path, saved_weights)
-    #
-    #     torch.save(model.state_dict(), saved_weights_file)
-    #
-    #     console.info(f"Final model weights saved to {saved_weights_file}")
+        if rank == 0:
+            acc1, many, med, few, _, _ = validate(train_loader, val_loader, model, criterion_ce, config, console)
+
+            is_best = acc1 > best_acc1
+            best_acc1 = max(acc1, best_acc1)
+            if is_best:
+                best_many = many
+                best_med = med
+                best_few = few
+                console.info('Epoch: {:.3f}, Best Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: '
+                             '{:.3f}'.format(epoch, best_acc1, best_many, best_med, best_few))
+
+                # Save the model weights
+                saved_weights_best = f'model_weights_best.pth'
+                saved_weights_file_best = os.path.join(config.training_path, saved_weights_best)
+
+                console.info(f"Model weights saved to {saved_weights_file_best}")
+                torch.save(model.state_dict(), saved_weights_file_best)
+
+            top1_val_avg.append(acc1)
+            plot_loss(top1_val_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                      name='ACC_validation.png')
+
+    if rank == 0:
+        # Create a plot of the loss values
+        plot_loss(ce_loss_all_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='CE_loss.png')
+        plot_loss(scl_loss_all_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='SCL_loss.png')
+        plot_loss(top1_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='ACC.png')
+
+        # Save the model's state dictionary to a file
+        saved_weights = f'model_weights_epoch_{config.training_contrastive.num_epoch}.pth'
+        saved_weights_file = os.path.join(config.training_path, saved_weights)
+
+        torch.save(model.state_dict(), saved_weights_file)
+
+        console.info(f"Final model weights saved to {saved_weights_file}")
 
     if is_distributed:
         dist.barrier()
 
     if rank == 0:
-        # Create uvp dataset datasets for training and validation
-        if config.phase == 'train_val':
-            console.info('Testing model with validation subset')
-            train_dataset.phase = 'val'
-            val_dataset = train_dataset
+        # load best model
+        saved_weights_best = f'model_weights_best.pth'
+        saved_weights_file_best = os.path.join(config.training_path, saved_weights_best)
 
-            val_loader = DataLoader(val_dataset,
-                                    batch_size=config.training_contrastive.batch_size,
-                                    shuffle=True)
+        console.info("Best Model loaded from ", saved_weights_file_best)
 
-        elif config.input_csv_test is not None:
-            console.info('Testing model with folder test')
+        state_dict = torch.load(saved_weights_file_best, map_location=device)
 
-            test_dataset = UvpDataset(root_dir=config.input_folder_test,
-                                      num_class=config.sampling.num_class,
-                                      csv_file=config.input_csv_test,
-                                      transform=transform_val,
-                                      phase='test',
-                                      gray=config.training_contrastive.gray)
-
-            val_loader = DataLoader(test_dataset,
-                                    batch_size=config.classifier.batch_size,
-                                    shuffle=True,
-                                    num_workers=config.training_contrastive.num_workers)
+        if world_size > 1:
+            new_state_dict = state_dict
         else:
-            console.quit('no data for testing model')
+            new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
 
-        # Evaluation loop
-        model.eval()
-        all_labels = []
-        all_preds = []
-        batch_time = AverageMeter('Time', ':6.3f')
-        ce_loss_all = AverageMeter('CE_Loss', ':.4e')
-        top1 = AverageMeter('Acc@1', ':6.2f')
+        console.info("Model loaded from ", saved_weights_file_best)
+        model.load_state_dict(new_state_dict, strict=True)
+        model.to(device)
 
-        total_logits = torch.empty((0, config.sampling.num_class)).to(device)
-        total_labels = torch.empty(0, dtype=torch.long).to(device)
+        test_dataset = UvpDataset(root_dir=config.input_folder_test,
+                                  num_class=config.sampling.num_class,
+                                  csv_file=config.input_csv_test,
+                                  transform=transform_val,
+                                  phase='test',
+                                  gray=config.training_contrastive.gray)
 
-        with torch.no_grad():
-            end = time.time()
-            for images, labels, img_names in val_loader:
-                images, labels = images.to(device), labels.to(device)
+        test_loader = DataLoader(test_dataset,
+                                 batch_size=config.training_contrastive.batch_size,
+                                 shuffle=True,
+                                 num_workers=config.training_contrastive.num_workers)
 
-                _, ce_logits, _ = model(images)
-                logits = ce_logits
-
-                total_logits = torch.cat((total_logits, logits))
-                total_labels = torch.cat((total_labels, labels))
-
-                batch_time.update(time.time() - end)
-
-                probs, preds = F.softmax(logits, dim=1).max(dim=1)
-                save_image = False
-                if save_image:
-                    for i in range(len(preds)):
-                        int_label = preds[i].item()
-                        string_label = val_loader.dataset.get_string_label(int_label)
-                        image_name = img_names[i]
-                        image_path = os.path.join(config.training_path, 'output/', string_label, image_name.replace('output/', ''))
-
-                        if not os.path.exists(os.path.dirname(image_path)):
-                            os.makedirs(os.path.dirname(image_path))
-
-                        input_path = os.path.join(val_loader.dataset.root_dir, image_name)
-                        shutil.copy(input_path, image_path)
-
-            # total_logits_list = [torch.zeros_like(total_logits) for _ in range(config.world_size)]
-            # total_labels_list = [torch.zeros_like(total_labels) for _ in range(config.world_size)]
-            #
-            # dist.all_gather(total_logits_list, total_logits)
-            # dist.all_gather(total_labels_list, total_labels)
-            #
-            # total_logits = torch.cat(total_logits_list, dim=0)
-            # total_labels = torch.cat(total_labels_list, dim=0)
-
-            ce_loss = criterion_ce(total_logits, total_labels)
-            acc1 = accuracy(total_logits, total_labels, topk=(1,))
-
-            ce_loss_all.update(ce_loss.item(), 1)
-            top1.update(acc1[0].item(), 1)
-
-            # if tf_writer is not None:
-            #     tf_writer.add_scalar('CE loss/val', ce_loss_all.avg, epoch)
-            #     tf_writer.add_scalar('acc/val_top1', top1.avg, epoch)
-
-            all_probs, all_preds = F.softmax(total_logits, dim=1).max(dim=1)
-            many_acc_top1, median_acc_top1, low_acc_top1 = shot_acc(all_preds, total_labels, train_loader, acc_per_cls=False)
-            acc1 = top1.avg
-            many = many_acc_top1*100
-            med = median_acc_top1*100
-            few = low_acc_top1*100
-            # print('Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: {:.3f}'.format(acc1, many, med, few))
-            console.info('Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: {:.3f}'.format(acc1, many, med, few))
+        acc1, many, med, few, total_labels, all_preds = validate(train_loader, test_loader, model, criterion_ce, config,
+                                                                 console)
 
         total_labels = total_labels.cpu().numpy()
         all_preds = all_preds.cpu().numpy()
@@ -898,8 +786,14 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
     top1 = AverageMeter('Acc@1', ':6.2f')
 
     end = time.time()
+    for batch_idx, data in enumerate(train_loader):
+        if len(data) == 3:
+            images, labels, _ = data
+        elif len(data) == 2:
+            images, labels = data
+        else:
+            raise ValueError("Unexpected number of elements returned by train_loader.")
 
-    for batch_idx, (images, labels) in enumerate(train_loader):
         batch_size = labels.shape[0]
         labels = labels.to(config.device)
 
@@ -995,7 +889,13 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
     with torch.no_grad():
         end = time.time()
         for i, data in enumerate(val_loader):
-            images, labels = data
+            if len(data) == 3:
+                images, labels, img_names = data
+            elif len(data) == 2:
+                images, labels = data
+            else:
+                raise ValueError("Unexpected number of elements returned by train_loader.")
+
             images, labels = images.to(config.device), labels.to(config.device)
 
             _, ce_logits, _ = model(images)
@@ -1005,6 +905,23 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
             total_labels = torch.cat((total_labels, labels))
 
             batch_time.update(time.time() - end)
+
+            probs, preds = F.softmax(logits, dim=1).max(dim=1)
+            save_image = False
+            if save_image:
+                for i in range(len(preds)):
+                    int_label = preds[i].item()
+                    string_label = val_loader.dataset.get_string_label(int_label)
+                    image_name = img_names[i]
+                    image_path = os.path.join(config.training_path, 'output/', string_label,
+                                              image_name.replace('output/', ''))
+
+                    if not os.path.exists(os.path.dirname(image_path)):
+                        os.makedirs(os.path.dirname(image_path))
+
+                    input_path = os.path.join(val_loader.dataset.root_dir, image_name)
+                    shutil.copy(input_path, image_path)
+
 
         ce_loss = criterion_ce(total_logits, total_labels)
         acc1 = accuracy(total_logits, total_labels, topk=(1,))
