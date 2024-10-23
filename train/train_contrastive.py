@@ -225,15 +225,18 @@ def train_uvp(rank, world_size, config, console):
 
     if config.training_contrastive.path_pretrain:
         pth_files = [file for file in os.listdir(config.training_path) if
-                     file.endswith('.pth') and file != 'model_weights_final.pth']
+                     file.endswith('.pth') and file != 'model_weights_best.pth']
         epochs = [int(file.split('_')[-1].split('.')[0]) for file in pth_files]
         latest_epoch = max(epochs)
         latest_pth_file = f"model_weights_epoch_{latest_epoch}.pth"
 
         saved_weights_file = os.path.join(config.training_path, latest_pth_file)
 
+        state_dict = torch.load(saved_weights_file, map_location=device)
+        new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+
         console.info("Model loaded from ", saved_weights_file)
-        model.load_state_dict(torch.load(saved_weights_file, map_location=device), strict=False)
+        model.load_state_dict(new_state_dict, strict=True)
         model.to(device)
     else:
         latest_epoch = 0
@@ -397,19 +400,19 @@ def train_uvp(rank, world_size, config, console):
         if is_distributed:
             dist.barrier()
 
-    if rank == 0:
-        # Create a plot of the loss values
-        plot_loss(ce_loss_all_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='CE_loss.png')
-        plot_loss(scl_loss_all_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='SCL_loss.png')
-        plot_loss(top1_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='ACC.png')
-
-        # Save the model's state dictionary to a file
-        saved_weights = "model_weights_final.pth"
-        saved_weights_file = os.path.join(config.training_path, saved_weights)
-
-        torch.save(model.state_dict(), saved_weights_file)
-
-        console.info(f"Final model weights saved to {saved_weights_file}")
+    # if rank == 0:
+    #     # Create a plot of the loss values
+    #     plot_loss(ce_loss_all_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='CE_loss.png')
+    #     plot_loss(scl_loss_all_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='SCL_loss.png')
+    #     plot_loss(top1_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='ACC.png')
+    #
+    #     # Save the model's state dictionary to a file
+    #     saved_weights = "model_weights_final.pth"
+    #     saved_weights_file = os.path.join(config.training_path, saved_weights)
+    #
+    #     torch.save(model.state_dict(), saved_weights_file)
+    #
+    #     console.info(f"Final model weights saved to {saved_weights_file}")
 
     if is_distributed:
         dist.barrier()
@@ -562,6 +565,11 @@ def train_imagenet_inatural(rank, world_size, config, console):
 
         txt_train = f'ImageNet_LT/ImageNet_LT_train.txt'
         txt_val = f'ImageNet_LT/ImageNet_LT_val.txt'
+
+        # # debug
+        # txt_train = f'ImageNet_LT/ImageNet_LT_train_f.txt'
+        # txt_val = f'ImageNet_LT/ImageNet_LT_train_f.txt'
+
         normalize = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
 
     # Define data transformations
@@ -677,6 +685,9 @@ def train_imagenet_inatural(rank, world_size, config, console):
     # test memory usage
     # console.info(memory_usage(config, model, device))
 
+    if world_size > 1:
+        model = DDP(model, device_ids=[rank])
+
     if config.training_contrastive.path_pretrain:
         pth_files = [file for file in os.listdir(config.training_path) if
                      file.endswith('.pth') and file != 'model_weights_best.pth']
@@ -685,15 +696,18 @@ def train_imagenet_inatural(rank, world_size, config, console):
         latest_pth_file = f"model_weights_epoch_{latest_epoch}.pth"
 
         saved_weights_file = os.path.join(config.training_path, latest_pth_file)
+        state_dict = torch.load(saved_weights_file, map_location=device)
+
+        if world_size > 1:
+            new_state_dict = state_dict
+        else:
+            new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
 
         console.info("Model loaded from ", saved_weights_file)
-        model.load_state_dict(torch.load(saved_weights_file, map_location=device))
+        model.load_state_dict(new_state_dict, strict=True)
         model.to(device)
     else:
         latest_epoch = 0
-
-    if world_size > 1:
-        model = DDP(model, device_ids=[rank])
 
     # Loss criterion and optimizer
     cls_num_list = train_dataset.cls_num_list
@@ -742,121 +756,33 @@ def train_imagenet_inatural(rank, world_size, config, console):
     top1_avg = []
     top1_val_avg = []
     best_acc1 = 0.0
-    best_many, best_med, best_few = 0.0, 0.0, 0.0
 
     # Training loop
     for epoch in range(latest_epoch, config.training_contrastive.num_epoch):
-        model.train()
-        running_loss = 0.0
-        running_corrects = 0
-
-        if hasattr(criterion_scl, "_hook_before_epoch"):
-            criterion_scl._hook_before_epoch()
 
         if is_distributed and sampler_train is not None:
             sampler_train.set_epoch(epoch)
 
         adjust_lr(optimizer, epoch, config)
 
-        batch_time = AverageMeter('Time', ':6.3f')
-        ce_loss_all = AverageMeter('CE_Loss', ':.4e')
-        scl_loss_all = AverageMeter('SCL_Loss', ':.4e')
-        top1 = AverageMeter('Acc@1', ':6.2f')
-
-        end = time.time()
-
-        for batch_idx, (images, labels) in enumerate(train_loader):
-            batch_size = labels.shape[0]
-            labels = labels.to(device)
-
-            mini_batch_size = batch_size // config.training_contrastive.accumulation_steps
-
-            images_0_mini_batches = torch.split(images[0], mini_batch_size)
-            images_1_mini_batches = torch.split(images[1], mini_batch_size)
-            images_2_mini_batches = torch.split(images[2], mini_batch_size)
-            labels_mini_batches = torch.split(labels, mini_batch_size)
-
-            optimizer.zero_grad()
-
-            aggregated_logits = []
-
-            for i in range(len(images_0_mini_batches)):
-                mini_images = torch.cat([images_0_mini_batches[i], images_1_mini_batches[i], images_2_mini_batches[i]],
-                                        dim=0)
-                mini_labels = labels_mini_batches[i]
-
-                mini_images, mini_labels = mini_images.to(device), mini_labels.to(device)
-
-                feat_mlp, ce_logits, _ = model(mini_images)
-                _, f2, f3 = torch.split(feat_mlp, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
-                ce_logits, _, __ = torch.split(ce_logits, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
-
-                contrast_logits1 = criterion_scl(f2, mini_labels)
-                contrast_logits2 = criterion_scl(f3, mini_labels)
-                contrast_logits1, contrast_logits2 = contrast_logits1.to(device), contrast_logits2.to(device)
-
-                contrast_logits = (contrast_logits1 + contrast_logits2) / 2
-
-                scl_loss = (criterion_ce(contrast_logits1, mini_labels) + criterion_ce(contrast_logits2, mini_labels)) / 2
-                # scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
-                ce_loss = criterion_ce(ce_logits, mini_labels)
-
-                alpha = 1
-                logits = ce_logits + alpha * contrast_logits
-                loss = ce_loss + alpha * scl_loss
-
-                # Accumulate gradients
-                loss.backward()
-                aggregated_logits.append(logits)
-
-            optimizer.step()
-            aggregated_logits = torch.cat(aggregated_logits, dim=0)
-            aggregated_logits = aggregated_logits.to(device)
-
-            ce_loss_all.update(ce_loss.item(), batch_size)
-            scl_loss_all.update(scl_loss.item(), batch_size)
-
-            acc1 = accuracy(aggregated_logits, labels, topk=(1,))
-            top1.update(acc1[0].item(), batch_size)
-
-            # optimizer.zero_grad()
-            # loss.backward()
-            # optimizer.step()
-
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            # # for debug
-            # from tools.image import save_img
-            # save_img(images, batch_idx, epoch, training_path/"augmented")
-
-            # if batch_idx % 20 == 0:
-            #     output = ('Epoch: [{0}][{1}/{2}] \t'
-            #               'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-            #               'CE_Loss {ce_loss.val:.4f} ({ce_loss.avg:.4f})\t'
-            #               'SCL_Loss {scl_loss.val:.4f} ({scl_loss.avg:.4f})\t'
-            #               'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-            #         epoch, batch_idx, len(train_loader), batch_time=batch_time,
-            #         ce_loss=ce_loss_all, scl_loss=scl_loss_all, top1=top1, ))  # TODO
-            #     print(output)
-
-        console.info(f"CE loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {ce_loss_all.avg:.4f} ")
-        console.info(f"SCL loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {scl_loss_all.avg:.4f} ")
-        console.info(f"acc train top1 [{epoch + 1}/{config.training_contrastive.num_epoch}] - Acc: {top1.avg:.4f} ")
+        ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
+                                                config, console)
 
         ce_loss_all_avg.append(ce_loss_all.avg)
         scl_loss_all_avg.append(scl_loss_all.avg)
         top1_avg.append(top1.avg)
 
-        plot_loss(ce_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='CE_loss.png')
-        plot_loss(scl_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='SCL_loss.png')
+        plot_loss(ce_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                  name='CE_loss.png')
+        plot_loss(scl_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                  name='SCL_loss.png')
         plot_loss(top1_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='ACC.png')
 
         if is_distributed:
             dist.barrier()
 
         if rank == 0:
-            acc1, many, med, few = validate(train_loader, val_loader, model, criterion_ce, config, console)
+            acc1, many, med, few, _, _ = validate(train_loader, val_loader, model, criterion_ce, config, console)
 
             is_best = acc1 > best_acc1
             best_acc1 = max(acc1, best_acc1)
@@ -897,8 +823,20 @@ def train_imagenet_inatural(rank, world_size, config, console):
 
     if rank == 0:
         # load best model
+        saved_weights_best = f'model_weights_best.pth'
+        saved_weights_file_best = os.path.join(config.training_path, saved_weights_best)
+
         console.info("Best Model loaded from ", saved_weights_file_best)
-        model.load_state_dict(torch.load(saved_weights_file_best, map_location=device))
+
+        state_dict = torch.load(saved_weights_file_best, map_location=device)
+
+        if world_size > 1:
+            new_state_dict = state_dict
+        else:
+            new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+
+        console.info("Model loaded from ", saved_weights_file_best)
+        model.load_state_dict(new_state_dict, strict=True)
         model.to(device)
 
         if config.training_contrastive.dataset == 'inat':
@@ -919,49 +857,7 @@ def train_imagenet_inatural(rank, world_size, config, console):
                                  shuffle=True,
                                  num_workers=config.training_contrastive.num_workers)
 
-        # Evaluation loop
-        model.eval()
-        all_labels = []
-        all_preds = []
-        batch_time = AverageMeter('Time', ':6.3f')
-        ce_loss_all = AverageMeter('CE_Loss', ':.4e')
-        top1 = AverageMeter('Acc@1', ':6.2f')
-
-        total_logits = torch.empty((0, config.sampling.num_class)).to(device)
-        total_labels = torch.empty(0, dtype=torch.long).to(device)
-
-        with torch.no_grad():
-            end = time.time()
-            for i, data in enumerate(test_loader):
-                images, labels = data
-                images, labels = images.to(device), labels.to(device)
-
-                _, ce_logits, _ = model(images)
-                logits = ce_logits
-
-                total_logits = torch.cat((total_logits, logits))
-                total_labels = torch.cat((total_labels, labels))
-
-                batch_time.update(time.time() - end)
-
-            ce_loss = criterion_ce(total_logits, total_labels)
-            acc1 = accuracy(total_logits, total_labels, topk=(1,))
-
-            ce_loss_all.update(ce_loss.item(), 1)
-            top1.update(acc1[0].item(), 1)
-
-            # if tf_writer is not None:
-            #     tf_writer.add_scalar('CE loss/val', ce_loss_all.avg, epoch)
-            #     tf_writer.add_scalar('acc/val_top1', top1.avg, epoch)
-
-            all_probs, all_preds = F.softmax(total_logits, dim=1).max(dim=1)
-            many_acc_top1, median_acc_top1, low_acc_top1 = shot_acc(all_preds, total_labels, train_loader, acc_per_cls=False)
-            acc1 = top1.avg
-            many = many_acc_top1*100
-            med = median_acc_top1*100
-            few = low_acc_top1*100
-            # print('Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: {:.3f}'.format(acc1, many, med, few))
-            console.info('Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: {:.3f}'.format(acc1, many, med, few))
+        acc1, many, med, few, total_labels, all_preds = validate(train_loader, test_loader, model, criterion_ce, config, console)
 
         total_labels = total_labels.cpu().numpy()
         all_preds = all_preds.cpu().numpy()
@@ -988,6 +884,102 @@ def train_imagenet_inatural(rank, world_size, config, console):
         console.info('************* Evaluation Report *************')
         console.info(report)
         console.save_log(config.training_path)
+
+
+def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, config, console):
+    model.train()
+
+    if hasattr(criterion_scl, "_hook_before_epoch"):
+        criterion_scl._hook_before_epoch()
+
+    batch_time = AverageMeter('Time', ':6.3f')
+    ce_loss_all = AverageMeter('CE_Loss', ':.4e')
+    scl_loss_all = AverageMeter('SCL_Loss', ':.4e')
+    top1 = AverageMeter('Acc@1', ':6.2f')
+
+    end = time.time()
+
+    for batch_idx, (images, labels) in enumerate(train_loader):
+        batch_size = labels.shape[0]
+        labels = labels.to(config.device)
+
+        mini_batch_size = batch_size // config.training_contrastive.accumulation_steps
+
+        images_0_mini_batches = torch.split(images[0], mini_batch_size)
+        images_1_mini_batches = torch.split(images[1], mini_batch_size)
+        images_2_mini_batches = torch.split(images[2], mini_batch_size)
+        labels_mini_batches = torch.split(labels, mini_batch_size)
+
+        optimizer.zero_grad()
+
+        aggregated_logits = []
+
+        for i in range(len(images_0_mini_batches)):
+            mini_images = torch.cat([images_0_mini_batches[i], images_1_mini_batches[i], images_2_mini_batches[i]],
+                                    dim=0)
+            mini_labels = labels_mini_batches[i]
+
+            mini_images, mini_labels = mini_images.to(config.device), mini_labels.to(config.device)
+
+            feat_mlp, ce_logits, _ = model(mini_images)
+            _, f2, f3 = torch.split(feat_mlp, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
+            ce_logits, _, __ = torch.split(ce_logits, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
+
+            contrast_logits1 = criterion_scl(f2, mini_labels)
+            contrast_logits2 = criterion_scl(f3, mini_labels)
+            contrast_logits1, contrast_logits2 = contrast_logits1.to(config.device), contrast_logits2.to(config.device)
+
+            contrast_logits = (contrast_logits1 + contrast_logits2) / 2
+
+            scl_loss = (criterion_ce(contrast_logits1, mini_labels) + criterion_ce(contrast_logits2, mini_labels)) / 2
+            # scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
+            ce_loss = criterion_ce(ce_logits, mini_labels)
+
+            alpha = 1
+            logits = ce_logits + alpha * contrast_logits
+            loss = ce_loss + alpha * scl_loss
+
+            # Accumulate gradients
+            loss.backward()
+            aggregated_logits.append(logits)
+
+        optimizer.step()
+        aggregated_logits = torch.cat(aggregated_logits, dim=0)
+        aggregated_logits = aggregated_logits.to(config.device)
+
+        ce_loss_all.update(ce_loss.item(), batch_size)
+        scl_loss_all.update(scl_loss.item(), batch_size)
+
+        acc1 = accuracy(aggregated_logits, labels, topk=(1,))
+        top1.update(acc1[0].item(), batch_size)
+
+        # optimizer.zero_grad()
+        # loss.backward()
+        # optimizer.step()
+
+        batch_time.update(time.time() - end)
+        end = time.time()
+
+        # # for debug
+        # from tools.image import save_img
+        # save_img(images, batch_idx, epoch, training_path/"augmented")
+
+        # if batch_idx % 20 == 0:
+        #     output = ('Epoch: [{0}][{1}/{2}] \t'
+        #               'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+        #               'CE_Loss {ce_loss.val:.4f} ({ce_loss.avg:.4f})\t'
+        #               'SCL_Loss {scl_loss.val:.4f} ({scl_loss.avg:.4f})\t'
+        #               'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
+        #         epoch, batch_idx, len(train_loader), batch_time=batch_time,
+        #         ce_loss=ce_loss_all, scl_loss=scl_loss_all, top1=top1, ))  # TODO
+        #     print(output)
+
+    console.info(f"CE loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {ce_loss_all.avg:.4f} ")
+    console.info(
+        f"SCL loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {scl_loss_all.avg:.4f} ")
+    console.info(f"acc train top1 [{epoch + 1}/{config.training_contrastive.num_epoch}] - Acc: {top1.avg:.4f} ")
+
+    return ce_loss_all, scl_loss_all, top1
 
 
 def validate(train_loader, val_loader, model, criterion_ce, config, console):
@@ -1020,10 +1012,6 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
         ce_loss_all.update(ce_loss.item(), 1)
         top1.update(acc1[0].item(), 1)
 
-        # if tf_writer is not None:
-        #     tf_writer.add_scalar('CE loss/val', ce_loss_all.avg, epoch)
-        #     tf_writer.add_scalar('acc/val_top1', top1.avg, epoch)
-
         all_probs, all_preds = F.softmax(total_logits, dim=1).max(dim=1)
         many_acc_top1, median_acc_top1, low_acc_top1 = shot_acc(all_preds, total_labels, train_loader,
                                                                 acc_per_cls=False)
@@ -1034,7 +1022,7 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
         console.info(
             'Validation: Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: {:.3f}'.format(acc1, many, med, few))
 
-        return acc1, many, med, few
+        return acc1, many, med, few, total_labels, all_preds
 
 
 class AverageMeter(object):
