@@ -302,23 +302,22 @@ class ProCoUNLoss(nn.Module):
 
         contrast_logits = LogRatioC.apply(kappa_new, torch.tensor(self.estimator.feature_num), logc)
 
-        ### weight based on kappa tilde
-        adjusted_kappa = kappa_min + (kappa_new - kappa_min) * adjustment_factor
-        adjusted_kappa = torch.clamp(adjusted_kappa, min=kappa_min, max=kappa_max)
+        # ### weight based on kappa tilde
+        # adjusted_kappa = kappa_min + (kappa_new - kappa_min) * adjustment_factor
+        # adjusted_kappa = torch.clamp(adjusted_kappa, min=kappa_min, max=kappa_max)
+        #
+        # normalized_kappa = torch.clamp((adjusted_kappa - adjusted_kappa.min()) /
+        #                                (adjusted_kappa.max() - adjusted_kappa.min() + 1e-8), min=0.01, max=0.99)
 
-        normalized_kappa = torch.clamp((adjusted_kappa - adjusted_kappa.min()) /
-                                       (adjusted_kappa.max() - adjusted_kappa.min() + 1e-8), min=0.01, max=0.99)
-
-        uncertainty = normalized_kappa
+        # uncertainty = normalized_kappa
 
         normalized_uncertainty = uncertainty
-        weight = normalized_uncertainty
+        # weight = normalized_uncertainty
 
-
-        # if uncertainty_metric == 'cosine':
-        #     weight = uncertainty_per_batch
-        # else:
-        #     weight = normalized_uncertainty.unsqueeze(0)  # [1, N]
+        if uncertainty_metric == 'cosine':
+            weight = uncertainty_per_batch
+        else:
+            weight = normalized_uncertainty.unsqueeze(0)  # [1, N]
 
         adjusted_logits = contrast_logits * weight
 
