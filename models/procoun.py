@@ -272,9 +272,6 @@ class ProCoUNLoss(nn.Module):
 
             uncertainty = normalized_kappa
 
-            # non-linear
-            # uncertainty = 1 / (normalized_kappa + 1e-8)
-
         if self.sampling_option == 'over_sample':
             sampling_probs = uncertainty.clone()
         elif self.sampling_option == 'down_sample':
@@ -305,17 +302,29 @@ class ProCoUNLoss(nn.Module):
 
         contrast_logits = LogRatioC.apply(kappa_new, torch.tensor(self.estimator.feature_num), logc)
 
-        # normalized_uncertainty = (uncertainty - uncertainty.min()) / (uncertainty.max() - uncertainty.min() + 1e-8)
-        normalized_uncertainty = uncertainty
+        ### weight based on kappa tilde
+        adjusted_kappa = kappa_min + (kappa_new - kappa_min) * adjustment_factor
+        adjusted_kappa = torch.clamp(adjusted_kappa, min=kappa_min, max=kappa_max)
 
-        if uncertainty_metric == 'cosine':
-            weight = uncertainty_per_batch
-        else:
-            weight = normalized_uncertainty.unsqueeze(0)  # [1, N]
+        normalized_kappa = torch.clamp((adjusted_kappa - adjusted_kappa.min()) /
+                                       (adjusted_kappa.max() - adjusted_kappa.min() + 1e-8), min=0.01, max=0.99)
+
+        uncertainty = normalized_kappa
+
+        normalized_uncertainty = uncertainty
+        weight = normalized_uncertainty
+
+
+        # if uncertainty_metric == 'cosine':
+        #     weight = uncertainty_per_batch
+        # else:
+        #     weight = normalized_uncertainty.unsqueeze(0)  # [1, N]
 
         adjusted_logits = contrast_logits * weight
 
         return adjusted_logits
+
+
 
 
 
