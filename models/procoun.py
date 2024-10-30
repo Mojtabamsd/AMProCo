@@ -249,7 +249,7 @@ class ProCoUNLoss(nn.Module):
             # scale kappa
             kappa_min = 1.0
             kappa_max = 1e5
-            beta = 0.5
+            beta = 1
 
             self.class_frequencies = self.class_frequencies.to(device)
             N_y = self.class_frequencies
@@ -259,10 +259,10 @@ class ProCoUNLoss(nn.Module):
             if N_max == N_min:
                 adjustment_factor = torch.ones_like(N_y)
             else:
-                adjustment_factor = (1 - (N_y - N_min) / (N_max - N_min)).pow(beta)
-                # log_scaled_frequencies = torch.log1p(N_y - N_min)
-                # adjustment_factor = (1 - (log_scaled_frequencies - log_scaled_frequencies.min()) /
-                #                      (log_scaled_frequencies.max() - log_scaled_frequencies.min())).pow(beta)
+                # adjustment_factor = (1 - (N_y - N_min) / (N_max - N_min)).pow(beta)
+                log_scaled_frequencies = torch.log1p(N_y - N_min)
+                adjustment_factor = (1 - (log_scaled_frequencies - log_scaled_frequencies.min()) /
+                                     (log_scaled_frequencies.max() - log_scaled_frequencies.min())).pow(beta)
 
             adjusted_kappa = kappa_min + (kappa - kappa_min) * adjustment_factor
             adjusted_kappa = torch.clamp(adjusted_kappa, min=kappa_min, max=kappa_max)
