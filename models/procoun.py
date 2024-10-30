@@ -249,7 +249,7 @@ class ProCoUNLoss(nn.Module):
             # scale kappa
             kappa_min = 1.0
             kappa_max = 1e5
-            beta = 1
+            beta = 0.5
 
             self.class_frequencies = self.class_frequencies.to(device)
             N_y = self.class_frequencies
