@@ -267,9 +267,10 @@ class ProCoUNLoss(nn.Module):
             adjusted_kappa = kappa_min + (kappa - kappa_min) * adjustment_factor
             adjusted_kappa = torch.clamp(adjusted_kappa, min=kappa_min, max=kappa_max)
 
-            normalized_kappa = torch.clamp((adjusted_kappa - adjusted_kappa.min()) /
+            # normalized_kappa = torch.clamp((adjusted_kappa - adjusted_kappa.min()) /
                                            # (adjusted_kappa.max() - adjusted_kappa.min() + 1e-8), min=0.01, max=0.99)
-                                           (adjusted_kappa.max() - adjusted_kappa.min() + 1e-8))
+            normalized_kappa = (adjusted_kappa - adjusted_kappa.min()) / \
+                               (adjusted_kappa.max() - adjusted_kappa.min() + 1e-8)
 
             uncertainty = normalized_kappa
 
