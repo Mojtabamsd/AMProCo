@@ -197,6 +197,9 @@ class ProCoUNLoss(nn.Module):
         self.estimator = EstimatorCV(self.feature_num, num_classes, self.device)
         self.sampling_option = sampling_option
         self.class_frequencies = class_frequencies
+        self.pi_y = self.class_frequencies / self.class_frequencies.sum()
+        self.log_pi_y = torch.log(self.pi_y + 1e-20)
+
 
     def cal_weight_for_classes(self, cls_num_list):
         cls_num_list = torch.Tensor(cls_num_list).view(1, self.num_classes)
@@ -238,82 +241,33 @@ class ProCoUNLoss(nn.Module):
         logc = self.estimator_old.logc.detach()
         kappa = self.estimator_old.kappa.detach()
 
-        uncertainty_metric = 'kappa'  # kappa or cosine
-        if uncertainty_metric == 'cosine':
-            class_prototypes = Ave_norm.unsqueeze(0)
-            features_expanded = features.unsqueeze(1)
-            cos_sim = F.cosine_similarity(features_expanded, class_prototypes, dim=2)
-            uncertainty_per_batch = 1 - torch.clamp(cos_sim, -1.0, 1.0)
-            uncertainty = uncertainty_per_batch.mean(dim=0)
-        else:
-            # scale kappa
-            kappa_min = 1.0
-            kappa_max = 1e5
-            beta = 1
-
-            self.class_frequencies = self.class_frequencies.to(device)
-            N_y = self.class_frequencies
-            N_min = N_y.min()
-            N_max = N_y.max()
-
-            if N_max == N_min:
-                adjustment_factor = torch.ones_like(N_y)
-            else:
-                # adjustment_factor = (1 - (N_y - N_min) / (N_max - N_min)).pow(beta)
-                log_scaled_frequencies = torch.log1p(N_y - N_min)
-                adjustment_factor = (1 - (log_scaled_frequencies - log_scaled_frequencies.min()) /
-                                     (log_scaled_frequencies.max() - log_scaled_frequencies.min())).pow(beta)
-
-            adjusted_kappa = kappa_min + (kappa - kappa_min) * adjustment_factor
-            adjusted_kappa = torch.clamp(adjusted_kappa, min=kappa_min, max=kappa_max)
-
-            # normalized_kappa = torch.clamp((adjusted_kappa - adjusted_kappa.min()) /
-                                           # (adjusted_kappa.max() - adjusted_kappa.min() + 1e-8), min=0.01, max=0.99)
-            normalized_kappa = (adjusted_kappa - adjusted_kappa.min()) / \
-                               (adjusted_kappa.max() - adjusted_kappa.min() + 1e-8)
-
-            uncertainty = normalized_kappa
-
-        if self.sampling_option == 'over_sample':
-            sampling_probs = uncertainty.clone()
-        elif self.sampling_option == 'down_sample':
-            inverse_uncertainty = 1 / (uncertainty + 1e-8)
-            sampling_probs = inverse_uncertainty.clone()
-        else:
-            sampling_probs = torch.ones_like(uncertainty)
-
-        sampling_probs[torch.isnan(sampling_probs)] = 0
-        sampling_probs[torch.isinf(sampling_probs)] = 0
-        sampling_probs = torch.clamp(sampling_probs, min=0)
-
-        sampling_probs = sampling_probs / sampling_probs.sum()
-
-        indices = torch.multinomial(sampling_probs, uncertainty.shape[0],
-                                    replacement=(False if self.sampling_option == 'none' else True))
-
-        if self.sampling_option == 'over_sample':
-            uncertainty[indices] *= 1.5
-        elif self.sampling_option == 'down_sample':
-            uncertainty[indices] *= 0.5
-
-        N = features.size(0)
-
         tem = kappa.reshape(-1, 1) * Ave_norm
         tem = tem.unsqueeze(0) + features[:N].unsqueeze(1) / self.temperature
         kappa_new = torch.linalg.norm(tem, dim=2)
 
         contrast_logits = LogRatioC.apply(kappa_new, torch.tensor(self.estimator.feature_num), logc)
 
-        normalized_uncertainty = uncertainty
+        similarities = torch.matmul(features, Ave_norm.T)
+        kappa_expanded = kappa.unsqueeze(0)
+        logc_expanded = logc.unsqueeze(0)
+        log_pi_y_expanded = self.log_pi_y.unsqueeze(0)
 
-        if uncertainty_metric == 'cosine':
-            weight = uncertainty_per_batch
-        else:
-            weight = normalized_uncertainty.unsqueeze(0)  # [1, N]
+        log_likelihood = kappa_expanded * similarities - logc_expanded
 
-        adjusted_logits = contrast_logits * weight
+        log_P_y_z = log_pi_y_expanded + log_likelihood
 
-        return adjusted_logits
+        log_P_y_z = F.log_softmax(log_P_y_z, dim=1)
+
+        P_y_z = torch.exp(log_P_y_z)
+
+
+        # Compute uncertainty per sample
+        # U(z_i) = -sum_y P(y | z_i) * log P(y | z_i)
+        U_z = -torch.sum(P_y_z * log_P_y_z, dim=1)  # Shape: (N,)
+
+        total_uncertainty = torch.sum(U_z)
+
+        return contrast_logits, total_uncertainty
 
 
 

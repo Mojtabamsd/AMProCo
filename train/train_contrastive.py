@@ -301,6 +301,7 @@ def train_uvp(rank, world_size, config, console):
 
     ce_loss_all_avg = []
     scl_loss_all_avg = []
+    tu_loss_all_avg = []
     top1_avg = []
     top1_val_avg = []
     best_acc1 = 0.0
@@ -313,17 +314,20 @@ def train_uvp(rank, world_size, config, console):
 
         adjust_lr(optimizer, epoch, config)
 
-        ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
+        ce_loss_all, scl_loss_all, top1, tu_loss_all = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
                                                 config, console)
 
         ce_loss_all_avg.append(ce_loss_all.avg)
         scl_loss_all_avg.append(scl_loss_all.avg)
+        tu_loss_all_avg.append(tu_loss_all.avg)
         top1_avg.append(top1.avg)
 
         plot_loss(ce_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
                   name='CE_loss.png')
         plot_loss(scl_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
                   name='SCL_loss.png')
+        plot_loss(tu_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                  name='TU_loss.png')
         plot_loss(top1_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='ACC.png')
 
         if is_distributed:
@@ -785,6 +789,7 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
     batch_time = AverageMeter('Time', ':6.3f')
     ce_loss_all = AverageMeter('CE_Loss', ':.4e')
     scl_loss_all = AverageMeter('SCL_Loss', ':.4e')
+    tu_loss_all = AverageMeter('TU_Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
 
     end = time.time()
@@ -821,19 +826,23 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
             _, f2, f3 = torch.split(feat_mlp, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
             ce_logits, _, __ = torch.split(ce_logits, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
 
-            contrast_logits1 = criterion_scl(f2, mini_labels)
-            contrast_logits2 = criterion_scl(f3, mini_labels)
+            contrast_logits1, tu1 = criterion_scl(f2, mini_labels)
+            contrast_logits2, tu2 = criterion_scl(f3, mini_labels)
+
             contrast_logits1, contrast_logits2 = contrast_logits1.to(config.device), contrast_logits2.to(config.device)
+            tu1, tu2 = tu1.to(config.device), tu2.to(config.device)
 
             contrast_logits = (contrast_logits1 + contrast_logits2) / 2
+            tu_loss = (tu1 + tu2) / 2
 
             scl_loss = (criterion_ce(contrast_logits1, mini_labels) + criterion_ce(contrast_logits2, mini_labels)) / 2
             # scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
             ce_loss = criterion_ce(ce_logits, mini_labels)
 
             alpha = 1
+            lambda_ = 1
             logits = ce_logits + alpha * contrast_logits
-            loss = ce_loss + alpha * scl_loss
+            loss = ce_loss + alpha * scl_loss + lambda_ * tu_loss
 
             # Accumulate gradients
             loss.backward()
@@ -845,6 +854,7 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
 
         ce_loss_all.update(ce_loss.item(), batch_size)
         scl_loss_all.update(scl_loss.item(), batch_size)
+        tu_loss_all.update(tu_loss.item(), batch_size)
 
         acc1 = accuracy(aggregated_logits, labels, topk=(1,))
         top1.update(acc1[0].item(), batch_size)
@@ -875,7 +885,7 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
         f"SCL loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {scl_loss_all.avg:.4f} ")
     console.info(f"acc train top1 [{epoch + 1}/{config.training_contrastive.num_epoch}] - Acc: {top1.avg:.4f} ")
 
-    return ce_loss_all, scl_loss_all, top1
+    return ce_loss_all, scl_loss_all, top1, tu_loss_all
 
 
 def validate(train_loader, val_loader, model, criterion_ce, config, console):
