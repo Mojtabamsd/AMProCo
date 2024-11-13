@@ -647,6 +647,7 @@ def train_imagenet_inatural(rank, world_size, config, console):
 
     ce_loss_all_avg = []
     scl_loss_all_avg = []
+    tu_loss_all_avg = []
     top1_avg = []
     top1_val_avg = []
     best_acc1 = 0.0
@@ -659,17 +660,20 @@ def train_imagenet_inatural(rank, world_size, config, console):
 
         adjust_lr(optimizer, epoch, config)
 
-        ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
+        ce_loss_all, scl_loss_all, top1, tu_loss_all = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
                                                 config, console)
 
         ce_loss_all_avg.append(ce_loss_all.avg)
         scl_loss_all_avg.append(scl_loss_all.avg)
+        tu_loss_all_avg.append(tu_loss_all.avg)
         top1_avg.append(top1.avg)
 
         plot_loss(ce_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
                   name='CE_loss.png')
         plot_loss(scl_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
                   name='SCL_loss.png')
+        plot_loss(tu_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                  name='TU_loss.png')
         plot_loss(top1_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='ACC.png')
 
         if is_distributed:
