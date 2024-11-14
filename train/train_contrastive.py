@@ -2,13 +2,14 @@ import datetime
 from configs.config import Configuration
 from tools.console import Console
 from pathlib import Path
-from torchvision import transforms
+from torchvision import transforms, datasets
 from torch.utils.data import Dataset, DataLoader, DistributedSampler
 from dataset.uvp_dataset import UvpDataset
 from models.classifier_cnn import count_parameters
 from models import resnext
 from dataset.imagenet import ImageNetLT
 from dataset.inat import INaturalist
+from dataset.fashionmnist import FashionMNISTDataset
 import math
 import os
 import shutil
@@ -45,7 +46,7 @@ def train_contrastive(config_path, input_path, output_path):
     if config.training_contrastive.dataset == 'uvp':
         input_folder_train = input_folder / "train"
         input_folder_test = input_folder / "test"
-    elif config.training_contrastive.dataset == 'imagenet':
+    else:
         input_folder_train = input_folder
         input_folder_test = input_folder
 
@@ -108,7 +109,8 @@ def train_contrastive(config_path, input_path, output_path):
         else:
             train_uvp(config.base.gpu_index, world_size, config, console)
 
-    elif config.training_contrastive.dataset == 'imagenet' or config.training_contrastive.dataset == 'inat':
+    elif config.training_contrastive.dataset == 'imagenet' or config.training_contrastive.dataset == 'inat' \
+            or config.training_contrastive.dataset == 'fashion':
         if world_size > 1:
             mp.spawn(train_imagenet_inatural, args=(world_size, config, console), nprocs=world_size, join=True)
         else:
@@ -466,6 +468,16 @@ def train_imagenet_inatural(rank, world_size, config, console):
 
         normalize = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
 
+    elif config.training_contrastive.dataset == 'fashion':
+        config.sampling.num_class = 10
+
+        train_images_path = 'dataset/fashion/train-images-idx3-ubyte.gz'
+        train_labels_path = 'dataset/fashion/train-labels-idx1-ubyte.gz'
+        test_images_path = 'dataset/fashion/t10k-images-idx3-ubyte.gz'
+        test_labels_path = 'dataset/fashion/t10k-labels-idx1-ubyte.gz'
+
+        normalize = None
+
     # Define data transformations
     randaug_m = 10
     randaug_n = 2
@@ -504,6 +516,30 @@ def train_imagenet_inatural(rank, world_size, config, console):
         transforms.ToTensor(),
         normalize
     ]
+
+    if config.training_contrastive.dataset == 'fashion':
+        grayscale_mean = 128
+        ra_params = dict(
+            translate_const=int(config.training_contrastive.target_size[0] * 0.45),
+            img_mean=grayscale_mean
+        )
+        augmentation_randncls = [
+            transforms.RandomResizedCrop(config.training_contrastive.target_size[0], scale=(0.08, 1.)),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomGrayscale(p=0.2),
+            rand_augment_transform('rand-n{}-m{}-mstd0.5'.format(randaug_n, randaug_m), ra_params),
+            transforms.ToTensor()
+        ]
+        augmentation_sim = [
+            transforms.RandomResizedCrop(config.training_contrastive.target_size[0]),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomApply([
+                transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
+            ], p=0.8),
+            transforms.RandomGrayscale(p=0.2),
+            transforms.ToTensor(),
+        ]
+
     if cl_views == 'sim-sim':
         transform_train = [transforms.Compose(augmentation_randncls), transforms.Compose(augmentation_sim),
                            transforms.Compose(augmentation_sim), ]
@@ -543,6 +579,17 @@ def train_imagenet_inatural(rank, world_size, config, console):
             root=config.input_folder_train,
             txt=txt_val,
             transform=transform_val, train=False)
+
+    elif config.training_contrastive.dataset == 'fashion':
+        train_dataset = FashionMNISTDataset(
+            train_images_path,
+            train_labels_path,
+            transform=transform_train)
+        val_dataset = FashionMNISTDataset(
+            test_images_path,
+            test_labels_path,
+            transform=transform_val,
+            train=False)
 
     console.info(f'===> Training data length {len(train_dataset)}')
     console.info(f'===> Validation data length {len(val_dataset)}')
@@ -660,20 +707,22 @@ def train_imagenet_inatural(rank, world_size, config, console):
 
         adjust_lr(optimizer, epoch, config)
 
-        ce_loss_all, scl_loss_all, top1, tu_loss_all = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
+        ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
                                                 config, console)
+        # ce_loss_all, scl_loss_all, top1, tu_loss_all = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
+        #                                         config, console)
 
         ce_loss_all_avg.append(ce_loss_all.avg)
         scl_loss_all_avg.append(scl_loss_all.avg)
-        tu_loss_all_avg.append(tu_loss_all.avg)
+        # tu_loss_all_avg.append(tu_loss_all.avg)
         top1_avg.append(top1.avg)
 
         plot_loss(ce_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
                   name='CE_loss.png')
         plot_loss(scl_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
                   name='SCL_loss.png')
-        plot_loss(tu_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
-                  name='TU_loss.png')
+        # plot_loss(tu_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+        #           name='TU_loss.png')
         plot_loss(top1_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='ACC.png')
 
         if is_distributed:
@@ -749,6 +798,9 @@ def train_imagenet_inatural(rank, world_size, config, console):
                 root=config.input_path,
                 txt=txt_test,
                 transform=transform_val, train=False)
+
+        elif config.training_contrastive.dataset == 'fashion':
+            test_dataset = val_dataset
 
         test_loader = DataLoader(test_dataset,
                                  batch_size=config.training_contrastive.batch_size,
@@ -830,14 +882,17 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
             _, f2, f3 = torch.split(feat_mlp, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
             ce_logits, _, __ = torch.split(ce_logits, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
 
-            contrast_logits1, tu1 = criterion_scl(f2, mini_labels)
-            contrast_logits2, tu2 = criterion_scl(f3, mini_labels)
+            contrast_logits1 = criterion_scl(f2, mini_labels)
+            contrast_logits2 = criterion_scl(f3, mini_labels)
+
+            # contrast_logits1, tu1 = criterion_scl(f2, mini_labels)
+            # contrast_logits2, tu2 = criterion_scl(f3, mini_labels)
 
             contrast_logits1, contrast_logits2 = contrast_logits1.to(config.device), contrast_logits2.to(config.device)
-            tu1, tu2 = tu1.to(config.device), tu2.to(config.device)
+            # tu1, tu2 = tu1.to(config.device), tu2.to(config.device)
 
             contrast_logits = (contrast_logits1 + contrast_logits2) / 2
-            tu_loss = (tu1 + tu2) / 2
+            # tu_loss = (tu1 + tu2) / 2
 
             scl_loss = (criterion_ce(contrast_logits1, mini_labels) + criterion_ce(contrast_logits2, mini_labels)) / 2
             # scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
@@ -846,7 +901,8 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
             alpha = 1
             lambda_ = 1
             logits = ce_logits + alpha * contrast_logits
-            loss = ce_loss + alpha * scl_loss + lambda_ * tu_loss
+            loss = ce_loss + alpha * scl_loss
+            # loss = ce_loss + alpha * scl_loss + lambda_ * tu_loss
 
             # Accumulate gradients
             loss.backward()
@@ -858,7 +914,7 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
 
         ce_loss_all.update(ce_loss.item(), batch_size)
         scl_loss_all.update(scl_loss.item(), batch_size)
-        tu_loss_all.update(tu_loss.item(), batch_size)
+        # tu_loss_all.update(tu_loss.item(), batch_size)
 
         acc1 = accuracy(aggregated_logits, labels, topk=(1,))
         top1.update(acc1[0].item(), batch_size)
@@ -889,7 +945,8 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
         f"SCL loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {scl_loss_all.avg:.4f} ")
     console.info(f"acc train top1 [{epoch + 1}/{config.training_contrastive.num_epoch}] - Acc: {top1.avg:.4f} ")
 
-    return ce_loss_all, scl_loss_all, top1, tu_loss_all
+    return ce_loss_all, scl_loss_all, top1
+    # return ce_loss_all, scl_loss_all, top1, tu_loss_all
 
 
 def validate(train_loader, val_loader, model, criterion_ce, config, console):
