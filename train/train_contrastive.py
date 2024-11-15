@@ -471,8 +471,10 @@ def train_imagenet_inatural(rank, world_size, config, console):
     elif config.training_contrastive.dataset == 'fashion':
         config.sampling.num_class = 10
 
-        train_images_path = 'dataset/fashion/train-images-idx3-ubyte.gz'
-        train_labels_path = 'dataset/fashion/train-labels-idx1-ubyte.gz'
+        train_images_path = 'dataset/fashion/train-images-idx3-ubyte-LT.gz'
+        train_labels_path = 'dataset/fashion/train-labels-idx1-ubyte-LT.gz'
+        val_images_path = 'dataset/fashion/val-images-idx3-ubyte.gz'
+        val_labels_path = 'dataset/fashion/val-labels-idx1-ubyte.gz'
         test_images_path = 'dataset/fashion/t10k-images-idx3-ubyte.gz'
         test_labels_path = 'dataset/fashion/t10k-labels-idx1-ubyte.gz'
 
@@ -558,6 +560,13 @@ def train_imagenet_inatural(rank, world_size, config, console):
         normalize
     ])
 
+    if config.training_contrastive.dataset == 'fashion':
+        transform_val = transforms.Compose([
+            transforms.Resize(config.training_contrastive.target_size[0]),
+            transforms.CenterCrop(config.training_contrastive.target_size[0]),
+            transforms.ToTensor()
+        ])
+
     # config.input_path = ''
 
     if config.training_contrastive.dataset == 'inat':
@@ -586,8 +595,8 @@ def train_imagenet_inatural(rank, world_size, config, console):
             train_labels_path,
             transform=transform_train)
         val_dataset = FashionMNISTDataset(
-            test_images_path,
-            test_labels_path,
+            val_images_path,
+            val_labels_path,
             transform=transform_val,
             train=False)
 
@@ -800,7 +809,11 @@ def train_imagenet_inatural(rank, world_size, config, console):
                 transform=transform_val, train=False)
 
         elif config.training_contrastive.dataset == 'fashion':
-            test_dataset = val_dataset
+            test_dataset = FashionMNISTDataset(
+                test_images_path,
+                test_labels_path,
+                transform=transform_val,
+                train=False)
 
         test_loader = DataLoader(test_dataset,
                                  batch_size=config.training_contrastive.batch_size,
