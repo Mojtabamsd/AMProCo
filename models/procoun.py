@@ -249,7 +249,7 @@ class ProCoUNLoss(nn.Module):
             # scale kappa
             kappa_min = 1.0
             kappa_max = 1e5
-            beta = 1
+            beta = 0.5
 
             self.class_frequencies = self.class_frequencies.to(device)
             N_y = self.class_frequencies
@@ -267,10 +267,10 @@ class ProCoUNLoss(nn.Module):
             adjusted_kappa = kappa_min + (kappa - kappa_min) * adjustment_factor
             adjusted_kappa = torch.clamp(adjusted_kappa, min=kappa_min, max=kappa_max)
 
-            # normalized_kappa = torch.clamp((adjusted_kappa - adjusted_kappa.min()) /
-                                           # (adjusted_kappa.max() - adjusted_kappa.min() + 1e-8), min=0.01, max=0.99)
-            normalized_kappa = (adjusted_kappa - adjusted_kappa.min()) / \
-                               (adjusted_kappa.max() - adjusted_kappa.min() + 1e-8)
+            normalized_kappa = torch.clamp((adjusted_kappa - adjusted_kappa.min()) /
+                                           (adjusted_kappa.max() - adjusted_kappa.min() + 1e-8), min=0.01, max=0.99)
+            # normalized_kappa = (adjusted_kappa - adjusted_kappa.min()) / \
+            #                    (adjusted_kappa.max() - adjusted_kappa.min() + 1e-8)
 
             uncertainty = normalized_kappa
 
