@@ -161,9 +161,9 @@ class EstimatorCV():
 
     def reset(self):
         device = self.Ave.device  # Get the device from the attribute
-        self.Ave = F.normalize(torch.randn(self.class_num, self.feature_num, device=device), dim=1) * 0.9
-        self.Amount = torch.zeros(self.class_num, device=device)
-        self.kappa = torch.ones(self.class_num, device=device) * self.feature_num * 90 / 19
+        self.Ave = F.normalize(torch.randn(self.class_num, self.max_modes, self.feature_num, device=device), dim=1) * 0.9
+        self.Amount = torch.zeros(self.class_num, self.max_modes, device=device)
+        self.kappa = torch.ones(self.class_num, self.max_modes, device=device) * self.feature_num * 90 / 19
         tem = torch.from_numpy(ive(self.feature_num / 2 - 1, self.kappa.cpu().numpy().astype(np.float64))).to(device)
         self.logc = torch.log(tem+1e-300) + self.kappa - (self.feature_num/2 - 1) * torch.log(self.kappa+1e-300)
 
