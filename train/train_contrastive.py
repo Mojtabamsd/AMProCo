@@ -907,8 +907,8 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
             contrast_logits = (contrast_logits1 + contrast_logits2) / 2
             # tu_loss = (tu1 + tu2) / 2
 
-            # scl_loss = (criterion_ce(contrast_logits1, mini_labels) + criterion_ce(contrast_logits2, mini_labels)) / 2
-            scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
+            scl_loss = (criterion_ce(contrast_logits1, mini_labels) + criterion_ce(contrast_logits2, mini_labels)) / 2
+            # scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
             ce_loss = criterion_ce(ce_logits, mini_labels)
 
             alpha = 1

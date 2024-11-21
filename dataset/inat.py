@@ -10,6 +10,10 @@ class INaturalist(Dataset):
         self.transform = transform
         self.num_classes = 8142
         self.train = train
+
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        txt = os.path.normpath(os.path.join(project_root, txt))
+
         with open(txt) as f:
             for line in f:
                 self.img_path.append(os.path.join(root, line.split()[0]))
