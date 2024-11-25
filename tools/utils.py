@@ -6,6 +6,9 @@ import psutil
 import seaborn as sns
 import os
 
+import matplotlib
+matplotlib.use('Agg')
+
 
 def report_to_df(report):
     report = [x.split(" ") for x in report.split("\n")]

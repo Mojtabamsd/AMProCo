@@ -1145,30 +1145,7 @@ def train_cifar(rank, world_size, config, console):
         model.load_state_dict(new_state_dict, strict=True)
         model.to(device)
 
-        if config.training_contrastive.dataset == 'inat':
-            txt_test = f'iNaturalist18/iNaturalist18_val.txt'
-            test_dataset = INaturalist(
-                root=config.input_path,
-                txt=txt_test,
-                transform=transform_val, train=False)
-        elif config.training_contrastive.dataset == 'imagenet':
-            txt_test = f'ImageNet_LT/ImageNet_LT_test.txt'
-            test_dataset = ImageNetLT(
-                root=config.input_path,
-                txt=txt_test,
-                transform=transform_val, train=False)
-
-        elif config.training_contrastive.dataset == 'fashion':
-            test_dataset = FashionMNISTDataset(
-                test_images_path,
-                test_labels_path,
-                transform=transform_val,
-                train=False)
-
-        test_loader = DataLoader(test_dataset,
-                                 batch_size=config.training_contrastive.batch_size,
-                                 shuffle=True,
-                                 num_workers=config.training_contrastive.num_workers)
+        test_loader = val_loader
 
         acc1, many, med, few, total_labels, all_preds = validate(train_loader, test_loader, model, criterion_ce, config, console)
 
