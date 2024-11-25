@@ -7,9 +7,12 @@ from torch.utils.data import Dataset, DataLoader, DistributedSampler
 from dataset.uvp_dataset import UvpDataset
 from models.classifier_cnn import count_parameters
 from models import resnext
+from models import resnet_cifar
 from dataset.imagenet import ImageNetLT
 from dataset.inat import INaturalist
 from dataset.fashionmnist import FashionMNISTDataset
+from dataset.cifar import IMBALANCECIFAR10, IMBALANCECIFAR100
+from tools.autoaug import CIFAR10Policy, Cutout
 import math
 import os
 import shutil
@@ -108,6 +111,12 @@ def train_contrastive(config_path, input_path, output_path):
             mp.spawn(train_uvp, args=(world_size, config, console), nprocs=world_size, join=True)
         else:
             train_uvp(config.base.gpu_index, world_size, config, console)
+
+    elif config.training_contrastive.dataset == 'cifar10' or config.training_contrastive.dataset == 'cifar100':
+        if world_size > 1:
+            mp.spawn(train_cifar, args=(world_size, config, console), nprocs=world_size, join=True)
+        else:
+            train_cifar(config.base.gpu_index, world_size, config, console)
 
     elif config.training_contrastive.dataset == 'imagenet' or config.training_contrastive.dataset == 'inat' \
             or config.training_contrastive.dataset == 'fashion':
@@ -661,6 +670,347 @@ def train_imagenet_inatural(rank, world_size, config, console):
 
     # Loss criterion and optimizer
     cls_num_list = train_dataset.cls_num_list
+    class_frequencies = torch.tensor(cls_num_list, dtype=torch.float32)
+    class_frequencies = class_frequencies.to(device)
+
+    config.cls_num = len(cls_num_list)
+
+    if config.training_contrastive.loss == 'proco':
+        criterion_ce = LogitAdjust(cls_num_list, device=device)
+        criterion_scl = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
+                                  temperature=config.training_contrastive.temp,
+                                  num_classes=config.sampling.num_class,
+                                  device=device)
+    elif config.training_contrastive.loss == 'procom':
+        criterion_ce = LogitAdjust(cls_num_list, device=device)
+        criterion_scl = ProCoMLoss(contrast_dim=config.training_contrastive.feat_dim,
+                                   temperature=config.training_contrastive.temp,
+                                   num_classes=config.sampling.num_class,
+                                   max_modes=config.training_contrastive.max_modes,
+                                   device=device)
+    elif config.training_contrastive.loss == 'procoun':
+        criterion_ce = LogitAdjust(cls_num_list, device=device)
+        criterion_scl = ProCoUNLoss(contrast_dim=config.training_contrastive.feat_dim,
+                                    class_frequencies=class_frequencies,
+                                    temperature=config.training_contrastive.temp,
+                                    num_classes=config.sampling.num_class,
+                                    device=device)
+    elif config.training_contrastive.loss == 'procos':
+        criterion_ce = LogitAdjust(cls_num_list, device=device)
+        criterion_scl = ProCoSLoss(contrast_dim=config.training_contrastive.feat_dim,
+                                   class_frequencies=class_frequencies,
+                                   temperature=config.training_contrastive.temp,
+                                   num_classes=config.sampling.num_class,
+                                   device=device)
+
+    optimizer = torch.optim.SGD(model.parameters(), config.training_contrastive.learning_rate,
+                                momentum=config.training_contrastive.momentum,
+                                weight_decay=config.training_contrastive.weight_decay)
+
+    if config.training_contrastive.path_pretrain:
+        criterion_scl.reload_memory()
+
+    ce_loss_all_avg = []
+    scl_loss_all_avg = []
+    tu_loss_all_avg = []
+    top1_avg = []
+    top1_val_avg = []
+    best_acc1 = 0.0
+
+    # Training loop
+    for epoch in range(latest_epoch, config.training_contrastive.num_epoch):
+
+        if is_distributed and sampler_train is not None:
+            sampler_train.set_epoch(epoch)
+
+        adjust_lr(optimizer, epoch, config)
+
+        ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
+                                                config, console)
+        # ce_loss_all, scl_loss_all, top1, tu_loss_all = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
+        #                                         config, console)
+
+        ce_loss_all_avg.append(ce_loss_all.avg)
+        scl_loss_all_avg.append(scl_loss_all.avg)
+        # tu_loss_all_avg.append(tu_loss_all.avg)
+        top1_avg.append(top1.avg)
+
+        plot_loss(ce_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                  name='CE_loss.png')
+        plot_loss(scl_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                  name='SCL_loss.png')
+        # plot_loss(tu_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+        #           name='TU_loss.png')
+        plot_loss(top1_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='ACC.png')
+
+        if is_distributed:
+            dist.barrier()
+
+        if rank == 0:
+            acc1, many, med, few, _, _ = validate(train_loader, val_loader, model, criterion_ce, config, console)
+
+            is_best = acc1 > best_acc1
+            best_acc1 = max(acc1, best_acc1)
+            if is_best:
+                best_many = many
+                best_med = med
+                best_few = few
+                console.info('Epoch: {:.3f}, Best Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: '
+                             '{:.3f}'.format(round(epoch+1), best_acc1, best_many, best_med, best_few))
+
+                # Save the model weights
+                saved_weights_best = f'model_weights_best.pth'
+                saved_weights_file_best = os.path.join(config.training_path, saved_weights_best)
+
+                console.info(f"Model weights saved to {saved_weights_file_best}")
+                torch.save(model.state_dict(), saved_weights_file_best)
+
+            top1_val_avg.append(acc1)
+            plot_loss(top1_val_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                      name='ACC_validation.png')
+
+    if rank == 0:
+        # Create a plot of the loss values
+        plot_loss(ce_loss_all_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='CE_loss.png')
+        plot_loss(scl_loss_all_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='SCL_loss.png')
+        plot_loss(top1_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='ACC.png')
+
+        # Save the model's state dictionary to a file
+        saved_weights = f'model_weights_epoch_{config.training_contrastive.num_epoch}.pth'
+        saved_weights_file = os.path.join(config.training_path, saved_weights)
+
+        torch.save(model.state_dict(), saved_weights_file)
+
+        console.info(f"Final model weights saved to {saved_weights_file}")
+
+    if is_distributed:
+        dist.barrier()
+
+    if rank == 0:
+        # load best model
+        saved_weights_best = f'model_weights_best.pth'
+        saved_weights_file_best = os.path.join(config.training_path, saved_weights_best)
+
+        console.info("Best Model loaded from ", saved_weights_file_best)
+
+        state_dict = torch.load(saved_weights_file_best, map_location=device)
+
+        if world_size > 1:
+            new_state_dict = state_dict
+        else:
+            new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+
+        console.info("Model loaded from ", saved_weights_file_best)
+        model.load_state_dict(new_state_dict, strict=True)
+        model.to(device)
+
+        if config.training_contrastive.dataset == 'inat':
+            txt_test = f'iNaturalist18/iNaturalist18_val.txt'
+            test_dataset = INaturalist(
+                root=config.input_path,
+                txt=txt_test,
+                transform=transform_val, train=False)
+        elif config.training_contrastive.dataset == 'imagenet':
+            txt_test = f'ImageNet_LT/ImageNet_LT_test.txt'
+            test_dataset = ImageNetLT(
+                root=config.input_path,
+                txt=txt_test,
+                transform=transform_val, train=False)
+
+        elif config.training_contrastive.dataset == 'fashion':
+            test_dataset = FashionMNISTDataset(
+                test_images_path,
+                test_labels_path,
+                transform=transform_val,
+                train=False)
+
+        test_loader = DataLoader(test_dataset,
+                                 batch_size=config.training_contrastive.batch_size,
+                                 shuffle=True,
+                                 num_workers=config.training_contrastive.num_workers)
+
+        acc1, many, med, few, total_labels, all_preds = validate(train_loader, test_loader, model, criterion_ce, config, console)
+
+        total_labels = total_labels.cpu().numpy()
+        all_preds = all_preds.cpu().numpy()
+
+        report = classification_report(
+            total_labels,
+            all_preds,
+            digits=6,
+        )
+
+        conf_mtx = confusion_matrix(
+            total_labels,
+            all_preds,
+        )
+
+        df = report_to_df(report)
+        report_filename = os.path.join(config.training_path, 'report_evaluation.csv')
+        df.to_csv(report_filename)
+
+        df = pd.DataFrame(conf_mtx)
+        conf_mtx_filename = os.path.join(config.training_path, 'conf_matrix_evaluation.csv')
+        df.to_csv(conf_mtx_filename)
+
+        console.info('************* Evaluation Report *************')
+        console.info(report)
+        console.save_log(config.training_path)
+
+
+def train_cifar(rank, world_size, config, console):
+
+    if world_size > 1:
+        setup(rank, world_size)
+
+    is_distributed = world_size > 1
+
+    device = torch.device(f"cuda:{rank}" if torch.cuda.is_available() else "cpu")
+    console.info(f"Running on:  {device}")
+
+    config.device = device
+
+    # number of classes for imagenet or inat
+    if config.training_contrastive.dataset == 'cifar10':
+        config.sampling.num_class = 10
+        # data_root = f'dataset/cifar/cifar-10-batches-py'
+
+    elif config.training_contrastive.dataset == 'cifar100':
+        config.sampling.num_class = 100
+        # data_root = f'dataset/cifar/cifar-100-batches-py'
+
+    if config.training_contrastive.num_epoch == 200:
+        config.training_contrastive.schedule = [160, 180]
+        config.training_contrastive.warmup_epochs = 5
+    elif config.training_contrastive.num_epoch == 400:
+        config.training_contrastive.schedule = [360, 380]
+        config.training_contrastive.warmup_epochs = 10
+    else:
+        config.training_contrastive.schedule = [config.training_contrastive.num_epoch * 0.8,
+                                                config.training_contrastive.num_epoch * 0.9]
+        config.training_contrastive.warmup_epochs = 5 * config.training_contrastive.num_epoch // 200
+
+    # Define data transformations
+    augmentation_regular = [
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        CIFAR10Policy(),    # add AutoAug
+        transforms.ToTensor(),
+        Cutout(n_holes=1, length=16),
+        transforms.Normalize(
+            (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        ]
+
+    augmentation_sim_cifar = [
+        transforms.RandomResizedCrop(size=32),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
+        transforms.RandomGrayscale(p=0.2),
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    ]
+
+    transform_train = [transforms.Compose(augmentation_regular),
+                       transforms.Compose(augmentation_sim_cifar),
+                       transforms.Compose(augmentation_sim_cifar)]
+
+    transform_val = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        ])
+
+    if config.training_contrastive.dataset == 'cifar10':
+        train_dataset = IMBALANCECIFAR10(root=config.input_folder_train, imb_type='exp',
+                                         imb_factor=config.training_contrastive.im_factor,
+                                         rand_number=0,
+                                         train=True,
+                                         download=True,
+                                         transform=transform_train)
+        val_dataset = datasets.CIFAR10(
+                root=config.input_folder_train,
+                train=False,
+                download=True,
+                transform=transform_val)
+
+    elif config.training_contrastive.dataset == 'cifar100':
+        train_dataset = IMBALANCECIFAR100(root=config.input_folder_train, imb_type='exp',
+                                          imb_factor=config.training_contrastive.im_factor,
+                                          rand_number=0,
+                                          train=True,
+                                          download=True,
+                                          transform=transform_train)
+        val_dataset = datasets.CIFAR100(
+                root=config.input_folder_train,
+                train=False,
+                download=True,
+                transform=transform_val)
+    else:
+        raise ValueError('Unknown dataset')
+
+    console.info(f'===> Training data length {len(train_dataset)}')
+    console.info(f'===> Validation data length {len(val_dataset)}')
+
+    if is_distributed:
+        sampler_train = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
+        # sampler_val = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank)
+        sampler_val = None
+    else:
+        sampler_train = None
+        sampler_val = None
+
+    train_loader = DataLoader(train_dataset,
+                              batch_size=config.training_contrastive.batch_size,
+                              sampler=sampler_train,
+                              shuffle=(not is_distributed),
+                              num_workers=config.training_contrastive.num_workers)
+
+    val_loader = DataLoader(
+        val_dataset, batch_size=config.training_contrastive.batch_size, shuffle=False,
+        num_workers=config.training_contrastive.num_workers, pin_memory=True, sampler=sampler_val)
+
+    if config.training_contrastive.architecture_type == 'resnet32':
+        model = resnet_cifar.Model(name=config.training_contrastive.architecture_type,
+                                   num_classes=config.sampling.num_class,
+                                   feat_dim=config.training_contrastive.feat_dim,
+                                   use_norm=config.training_contrastive.use_norm)
+    else:
+        raise NotImplementedError("only select resnet32 architecture for cifar datasets!")
+
+    # Calculate the number of parameters in millions
+    num_params = count_parameters(model) / 1_000_000
+    console.info(f"The model has approximately {num_params:.2f} million parameters.")
+
+    model.to(device)
+
+    # test memory usage
+    # console.info(memory_usage(config, model, device))
+
+    if world_size > 1:
+        model = DDP(model, device_ids=[rank])
+
+    if config.training_contrastive.path_pretrain:
+        pth_files = [file for file in os.listdir(config.training_path) if
+                     file.endswith('.pth') and file != 'model_weights_best.pth']
+        epochs = [int(file.split('_')[-1].split('.')[0]) for file in pth_files]
+        latest_epoch = max(epochs)
+        latest_pth_file = f"model_weights_epoch_{latest_epoch}.pth"
+
+        saved_weights_file = os.path.join(config.training_path, latest_pth_file)
+        state_dict = torch.load(saved_weights_file, map_location=device)
+
+        if world_size > 1:
+            new_state_dict = state_dict
+        else:
+            new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+
+        console.info("Model loaded from ", saved_weights_file)
+        model.load_state_dict(new_state_dict, strict=True)
+        model.to(device)
+    else:
+        latest_epoch = 0
+
+    # Loss criterion and optimizer
+    cls_num_list = train_dataset.get_cls_num_list()
     class_frequencies = torch.tensor(cls_num_list, dtype=torch.float32)
     class_frequencies = class_frequencies.to(device)
 

@@ -65,10 +65,11 @@ class TrainingConfig:
 
 
 class TrainingContrastiveConfig:
-    def __init__(self, dataset, architecture_type, batch_size, accumulation_steps, num_workers, gray, target_size,
+    def __init__(self, dataset, im_factor, architecture_type, batch_size, accumulation_steps, num_workers, gray, target_size,
                  padding, pre_train, learning_rate, weight_decay, cos, momentum, schedule, num_epoch, warmup_epochs,
                  loss, max_modes, feat_dim, temp, use_norm, path_pretrain):
         self.dataset = dataset
+        self.im_factor = im_factor
         self.architecture_type = architecture_type
         self.batch_size = batch_size
         self.accumulation_steps = accumulation_steps
