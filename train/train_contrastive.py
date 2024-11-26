@@ -563,7 +563,7 @@ def train_imagenet_inatural(rank, world_size, config, console):
     else:
         raise NotImplementedError("This augmentations strategy is not available for contrastive learning branch!")
     transform_val = transforms.Compose([
-        transforms.Resize(config.training_contrastive.target_size[0]),
+        transforms.Resize(256),
         transforms.CenterCrop(config.training_contrastive.target_size[0]),
         transforms.ToTensor(),
         normalize
@@ -873,11 +873,9 @@ def train_cifar(rank, world_size, config, console):
     # number of classes for imagenet or inat
     if config.training_contrastive.dataset == 'cifar10':
         config.sampling.num_class = 10
-        # data_root = f'dataset/cifar/cifar-10-batches-py'
 
     elif config.training_contrastive.dataset == 'cifar100':
         config.sampling.num_class = 100
-        # data_root = f'dataset/cifar/cifar-100-batches-py'
 
     if config.training_contrastive.num_epoch == 200:
         config.training_contrastive.schedule = [160, 180]
