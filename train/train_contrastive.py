@@ -25,9 +25,10 @@ import pandas as pd
 from tools.augmentation import ResizeAndPad
 from models.loss import LogitAdjust
 from models.proco import ProCoLoss
-from models.procom import ProCoMLoss
 from models.procoun import ProCoUNLoss
 from models.procos import ProCoSLoss
+from models.procom import HierarchicalProCoWrapper
+from dataset.cifar import CIFAR100_SUPERCLASSES
 import time
 import torch.nn.functional as F
 import torch.multiprocessing as mp
@@ -1022,11 +1023,38 @@ def train_cifar(rank, world_size, config, console):
                                   device=device)
     elif config.training_contrastive.loss == 'procom':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
-        criterion_scl = ProCoMLoss(contrast_dim=config.training_contrastive.feat_dim,
-                                   temperature=config.training_contrastive.temp,
-                                   num_classes=config.sampling.num_class,
-                                   max_modes=config.training_contrastive.max_modes,
-                                   device=device)
+
+        train_class2idx = train_dataset.class_to_idx
+        CIFAR100_SUPERCLASSES_ID = []
+        for superclass_name, leaf_names in CIFAR100_SUPERCLASSES:
+            leaf_ids = [train_class2idx[leaf_name] for leaf_name in leaf_names]
+            CIFAR100_SUPERCLASSES_ID.append((superclass_name, leaf_ids))
+
+        root_node_id = 120
+        superclass_to_id = {}
+        for i, (sname, leaf_list) in enumerate(CIFAR100_SUPERCLASSES_ID):
+            superclass_to_id[sname] = 100 + i  # 100..119
+
+        leaf_path_map = {}
+        for i, (sname, leaf_list) in enumerate(CIFAR100_SUPERCLASSES_ID):
+            super_id = 100 + i
+            for leaf in leaf_list:
+                # Path: Root -> This super_id -> leaf
+                leaf_path_map[leaf] = [root_node_id, super_id, leaf]
+
+        leaf_node_ids = list(range(100))  # 0..99
+        num_nodes = 121  # 1 root + 20 super + 100 leaves
+
+        criterion_scl = HierarchicalProCoWrapper(
+            proco_loss=ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
+                                 temperature=config.training_contrastive.temp,
+                                 num_classes=num_nodes,
+                                 device=device),
+            leaf_node_ids=leaf_node_ids,
+            leaf_path_map=leaf_path_map,
+            num_nodes=num_nodes).to(device)
+
+
     elif config.training_contrastive.loss == 'procoun':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
         criterion_scl = ProCoUNLoss(contrast_dim=config.training_contrastive.feat_dim,
