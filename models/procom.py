@@ -1,5 +1,3 @@
-# This file is copied form source code implementation of proco paper https://github.com/LeapLabTHU/ProCo
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -63,10 +61,28 @@ class HierarchicalProCoWrapper(nn.Module):
         leaf_logits = torch.zeros(batch_size, num_leaves, device=device)
 
         # Example approach: for each leaf L, sum node_logits over L's path
+        root_weight = 0
+        super_weight = 0.5
+        leaf_weight = 1.0
+
         for leaf_idx, leaf_id in enumerate(self.leaf_node_ids):
             path_nodes = self.leaf_path_map[leaf_id]  # e.g. [0, 3, 17,  ... leaf_id]
-            # node_logits[:, path_nodes].sum(dim=1) => shape [N]
+            assert len(path_nodes) == 3, "Expect 3 nodes in each path for CIFAR-100"
+
+            # Extract the node logits
+            root_logit = node_logits[:, path_nodes[0]]  # shape [N]
+            super_logit = node_logits[:, path_nodes[1]]
+            leaf_logit = node_logits[:, path_nodes[2]]
+
+            weighted_sum = (root_weight * root_logit +
+                            super_weight * super_logit +
+                            leaf_weight * leaf_logit)
+
+            total_weight = (root_weight + super_weight + leaf_weight)
+
             leaf_logits[:, leaf_idx] = node_logits[:, path_nodes].sum(dim=1)
+
+            leaf_logits[:, leaf_idx] = weighted_sum / total_weight
 
         return leaf_logits
 
