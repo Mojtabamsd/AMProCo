@@ -147,21 +147,20 @@ class EstimatorCV():
         self.kappa = self.kappa.to(device)
         self.logc = self.logc.to(device)
 
-
-        N = features.size(0)
+        N, A = features.shape[0], features.shape[1]
         C = self.class_num
-        A = features.size(1)
 
-        NxCxFeatures = features.view(
-            N, 1, A
-        ).expand(
-            N, C, A
-        )
-        onehot = torch.zeros(N, C, device=device)
+        NxCxFeatures = features.view(N, 1, A).expand(N, C, A)
 
-        onehot.scatter_(1, labels.view(-1, 1), 1)
+        # 1) Distinguish single- vs. multi-label:
+        if labels.dim() == 1:
+            onehot = torch.zeros(N, C, device=device)
+            onehot.scatter_(1, labels.view(-1, 1), 1)
+        else:
+            # Already multi-hot
+            onehot = labels  # shape [N, C]
 
-        NxCxA_onehot = onehot.view(N, C, 1).expand(N, C, A)
+        NxCxA_onehot = onehot.unsqueeze(2).expand(N, C, A)
 
         features_by_sort = NxCxFeatures.mul(NxCxA_onehot)
 
