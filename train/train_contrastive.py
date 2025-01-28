@@ -1266,7 +1266,7 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
 
             alpha = 1
             if epoch > 100:
-                lambda_ = 0
+                lambda_ = 0.1
             else:
                 lambda_ = 1
             logits = ce_logits + alpha * contrast_logits
