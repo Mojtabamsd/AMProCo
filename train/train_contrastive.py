@@ -1265,9 +1265,12 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
             ce_loss = criterion_ce(ce_logits, mini_labels)
 
             alpha = 1
-            lambda_ = 1
+            if epoch > 100:
+                lambda_ = 0
+            else:
+                lambda_ = 1
             logits = ce_logits + alpha * contrast_logits
-            loss = ce_loss + alpha * scl_loss
+            loss = lambda_ * ce_loss + alpha * scl_loss
             # loss = ce_loss + alpha * scl_loss + lambda_ * tu_loss
 
             # Accumulate gradients

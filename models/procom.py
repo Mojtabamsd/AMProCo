@@ -62,8 +62,8 @@ class HierarchicalProCoWrapper(nn.Module):
 
         # Example approach: for each leaf L, sum node_logits over L's path
         root_weight = 0
-        super_weight = 0.5
-        leaf_weight = 1.0
+        super_weight = 1
+        leaf_weight = 1
 
         for leaf_idx, leaf_id in enumerate(self.leaf_node_ids):
             path_nodes = self.leaf_path_map[leaf_id]  # e.g. [0, 3, 17,  ... leaf_id]
