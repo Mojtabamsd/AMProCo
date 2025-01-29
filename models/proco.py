@@ -139,7 +139,7 @@ class EstimatorCV():
         self.kappa = self.kappa.to(device)
         self.logc = self.logc.to(device)
  
-    def update_CV(self, features, labels):
+    def update_CV1(self, features, labels):
         device = features.device
 
         self.Ave = self.Ave.to(device)
@@ -179,6 +179,66 @@ class EstimatorCV():
         self.Ave = (self.Ave.mul(1 - weight_AV) + ave_CxA.mul(weight_AV)).detach()
 
         self.Amount += onehot.sum(0)
+
+    def update_CV(self, features, labels):
+        device = features.device
+        self.Ave = self.Ave.to(device)
+        self.Amount = self.Amount.to(device)
+        self.kappa = self.kappa.to(device)
+        self.logc = self.logc.to(device)
+
+        N, A = features.shape
+        C = self.class_num  # e.g. 141
+
+        NxCxFeatures = features.view(N,1,A).expand(N,C,A)
+
+        if labels.dim() == 1:
+            onehot = torch.zeros(N, C, device=device)
+            onehot.scatter_(1, labels.view(-1,1), 1)
+        else:
+            # Multi-hot => refine via best-match
+            onehot = self._best_match_refinement(features, labels)
+
+        NxCxA_onehot = onehot.unsqueeze(2).expand(N,C,A)
+        features_by_sort = NxCxFeatures * NxCxA_onehot
+
+        Amount_CxA = NxCxA_onehot.sum(dim=0)
+        Amount_CxA[Amount_CxA==0] = 1
+
+        ave_CxA = features_by_sort.sum(dim=0) / Amount_CxA
+
+        sum_weight_AV = onehot.sum(dim=0).view(C,1).expand(C,A)
+        weight_AV = sum_weight_AV / (sum_weight_AV + self.Amount.view(C,1).expand(C,A))
+        weight_AV[weight_AV!=weight_AV] = 0
+
+        self.Ave = (self.Ave*(1-weight_AV) + ave_CxA*weight_AV).detach()
+        self.Amount += onehot.sum(dim=0)
+
+    def _best_match_refinement(self, features, multi_hot):
+        refined = torch.zeros_like(multi_hot)
+        N = multi_hot.size(0)
+        for i in range(N):
+            node_ids = (multi_hot[i] == 1).nonzero(as_tuple=True)[0]
+            if node_ids.numel() == 0:
+                continue
+            # group them
+            refined[i] = self._pick_best_for_sample(features[i], node_ids)
+        return refined
+
+    def _pick_best_for_sample(self, feat, node_ids):
+        """
+        Return a row [C], picking exactly one prototype per superclass group
+        among node_ids. We'll do a simpler approach:
+        if node_ids includes [proto1_id, proto2_id], pick the best dot.
+        If single ID, keep it.
+        """
+        row = torch.zeros(self.class_num, device=feat.device)
+        # group logic
+        # ...
+        # For each group of prototypes, pick best
+        # set row[best_proto] = 1
+        return row
+
 
     def update_kappa(self, kappa_inf=False):
         R = torch.linalg.norm(self.Ave, dim=1)

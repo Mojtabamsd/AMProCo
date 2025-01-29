@@ -1023,7 +1023,7 @@ def train_cifar(rank, world_size, config, console):
                                   temperature=config.training_contrastive.temp,
                                   num_classes=config.sampling.num_class,
                                   device=device)
-    elif config.training_contrastive.loss == 'procom':
+    elif config.training_contrastive.loss == 'procom1':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
 
         train_class2idx = train_dataset.class_to_idx
@@ -1056,12 +1056,54 @@ def train_cifar(rank, world_size, config, console):
             leaf_path_map=leaf_path_map,
             num_nodes=num_nodes).to(device)
 
+        # this is used for tsne plot
         leaf_to_superclass_dict = {}
         for sup_id, (sup_name, leaf_ids) in enumerate(CIFAR100_SUPERCLASSES_ID):
             for leaf_id in leaf_ids:
                 leaf_to_superclass_dict[leaf_id] = sup_id
 
         class_names = [name for name, idx in train_dataset.class_to_idx.items()]
+
+    elif config.training_contrastive.loss == 'procom':
+        criterion_ce = LogitAdjust(cls_num_list, device=device)
+
+        train_class2idx = train_dataset.class_to_idx
+        CIFAR100_SUPERCLASSES_ID = []
+        for superclass_name, leaf_names in CIFAR100_SUPERCLASSES:
+            leaf_ids = [train_class2idx[leaf_name] for leaf_name in leaf_names]
+            CIFAR100_SUPERCLASSES_ID.append((superclass_name, leaf_ids))
+
+        root_node_id = 120
+        super_offset_1 = 100
+        super_offset_2 = 200
+
+        leaf_path_map = {}
+        for i, (sname, leaf_list) in enumerate(CIFAR100_SUPERCLASSES_ID):
+            proto1_id = super_offset_1 + i  # [100..119]
+            proto2_id = super_offset_2 + i  # [200..219]
+            for leaf in leaf_list:
+                # Root -> proto1 -> proto2 -> leaf
+                leaf_path_map[leaf] = [root_node_id, proto1_id, proto2_id, leaf]
+
+        leaf_node_ids = list(range(100))
+        num_nodes = 1 + 20 + 20 + 100  # 141
+
+        criterion_scl = HierarchicalProCoWrapper(
+            proco_loss=ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
+                                 temperature=config.training_contrastive.temp,
+                                 num_classes=num_nodes,
+                                 device=device),
+            leaf_node_ids=leaf_node_ids,
+            leaf_path_map=leaf_path_map,
+            num_nodes=num_nodes).to(device)
+
+        leaf_to_superclass_dict = {}
+        for sup_id, (sup_name, leaf_ids) in enumerate(CIFAR100_SUPERCLASSES_ID):
+            for leaf_id in leaf_ids:
+                leaf_to_superclass_dict[leaf_id] = sup_id
+
+        class_names = [name for name, idx in train_dataset.class_to_idx.items()]
+
 
     elif config.training_contrastive.loss == 'procoun':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
