@@ -152,12 +152,15 @@ class HierarchicalProCoWrapper(nn.Module):
         #    We call the ProCoLoss forward with labels=None so it doesn't do the standard single-label scatter.
         node_logits = self.proco_loss(features, labels=None)
 
-        hier_contrast_loss = F.binary_cross_entropy_with_logits(
-            node_logits, multi_hot, reduction='mean'
-        )
+        # 3) Hard Negative Mining => Build multi-label target
+        if leaf_labels is not None:
+            targets = build_hard_neg_targets(node_logits, leaf_labels, self.leaf_path_map, self.K)
+            # compute a multi-label BCE or margin loss
+            hard_neg_loss_val = hard_neg_loss(node_logits, targets)
+        else:
+            hard_neg_loss_val = None  # or 0.0
 
-        return hier_contrast_loss
-
+        return hard_neg_loss_val
 
     def _make_multi_hot(self, leaf_labels):
         """
@@ -175,3 +178,62 @@ class HierarchicalProCoWrapper(nn.Module):
             multi_hot[i, path_nodes] = 1.0
 
         return multi_hot
+
+
+def build_hard_neg_targets(node_logits, leaf_label, leaf_path_map, K):
+    """
+    node_logits: [batch, num_nodes]
+    leaf_label:  [batch] - each is in [0..99]
+    Returns multi-label target => shape [batch, num_nodes], where
+       +1 for path nodes,
+       0  for everything else except top-K negative nodes -> we can assign 0 for them too,
+       or we treat them with a strong negative label if you prefer.
+    """
+    device = node_logits.device
+    batch_size, num_nodes = node_logits.shape
+    targets = torch.zeros(batch_size, num_nodes, device=device)
+
+    for i in range(batch_size):
+        leaf_id = leaf_label[i].item()
+        pos_nodes = set(leaf_path_map[leaf_id])
+        # set them to +1
+        for n in pos_nodes:
+            targets[i, n] = 1.0
+
+        # find negative nodes
+        neg_nodes = list(set(range(num_nodes)) - pos_nodes)
+
+        # pick top-K from node_logits[i, neg_nodes]
+        neg_vals = node_logits[i, neg_nodes]  # shape [#neg_nodes]
+        # get top K indices in neg_vals
+        # We want the K with largest logit => "most likely negative"
+        topk_vals, topk_idx = torch.topk(neg_vals, k=K)
+        for j in topk_idx:
+            node_id = neg_nodes[j.item()]
+            # set them to 0 if you want standard multi-label
+            # or set them to -1 if you'd like a different representation
+            targets[i, node_id] = 0.0  # or some negative indicator
+
+    return targets
+
+
+def hard_neg_loss(node_logits, targets):
+    """
+    node_logits: [batch, num_nodes]
+    targets: [batch, num_nodes], each entry in {0,1} or {0,1,-1} depending on your scheme
+    We'll do a simple BCE:
+       if target=1 => -log(sigmoid(node_logit))
+       if target=0 => -log(1 - sigmoid(node_logit))
+    Then sum/mean over the "labeled" positions.
+    """
+    # if you used -1 for "strong negative," you might do a custom transform, e.g.:
+    #   t' = max(0, target), or something. We'll keep it simple (0 or 1).
+    # Ensure targets are in {0,1}
+    # for i in range(len(targets)): # if -1, set to 0, etc.
+
+    bce = F.binary_cross_entropy_with_logits(node_logits, targets, reduction='none')
+    # you can do a mask if you only want to average over the positions that are 1 or top-K
+    # e.g. mask = (targets != 0) # if 0 means unlabeled
+    # bce = bce * mask
+    return bce.mean()  # or sum()
+
