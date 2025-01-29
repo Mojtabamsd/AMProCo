@@ -1113,7 +1113,7 @@ def train_cifar(rank, world_size, config, console):
         if is_distributed:
             dist.barrier()
 
-        if rank == 0:
+        if rank != -1:
             acc1, many, med, few, _, _ = validate(train_loader, val_loader, model, criterion_ce, config, console)
 
             is_best = acc1 > best_acc1
@@ -1136,7 +1136,7 @@ def train_cifar(rank, world_size, config, console):
             plot_loss(top1_val_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
                       name='ACC_validation.png')
 
-    if rank == 0:
+    if rank != -1:
         # Create a plot of the loss values
         plot_loss(ce_loss_all_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='CE_loss.png')
         plot_loss(scl_loss_all_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='SCL_loss.png')
@@ -1153,7 +1153,7 @@ def train_cifar(rank, world_size, config, console):
     if is_distributed:
         dist.barrier()
 
-    if rank == 0:
+    if rank != -1:
         # load best model
         saved_weights_best = f'model_weights_best.pth'
         saved_weights_file_best = os.path.join(config.training_path, saved_weights_best)
