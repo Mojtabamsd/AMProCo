@@ -1056,15 +1056,12 @@ def train_cifar(rank, world_size, config, console):
             leaf_path_map=leaf_path_map,
             num_nodes=num_nodes).to(device)
 
-
         leaf_to_superclass_dict = {}
         for sup_id, (sup_name, leaf_ids) in enumerate(CIFAR100_SUPERCLASSES_ID):
             for leaf_id in leaf_ids:
                 leaf_to_superclass_dict[leaf_id] = sup_id
 
-        idx_to_class = {idx: name for name, idx in train_dataset.class_to_idx.items()}
-        num_classes = len(idx_to_class)
-        class_names = [train_class2idx[i] for i in range(num_classes)]
+        class_names = [name for name, idx in train_dataset.class_to_idx.items()]
 
     elif config.training_contrastive.loss == 'procoun':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
