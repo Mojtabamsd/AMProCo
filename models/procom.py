@@ -6,7 +6,7 @@ import numpy as np
 import torch.distributed as dist
 
 
-class HierarchicalProCoWrapper1(nn.Module):
+class HierarchicalProCoWrapper(nn.Module):
     def __init__(self,
                  proco_loss: nn.Module,
                  leaf_node_ids: list,
@@ -105,7 +105,7 @@ class HierarchicalProCoWrapper1(nn.Module):
         return multi_hot
 
 
-class HierarchicalProCoWrapper(nn.Module):
+class HierarchicalProCoWrapper1(nn.Module):
     def __init__(self,
                  proco_loss: nn.Module,
                  leaf_node_ids: list,

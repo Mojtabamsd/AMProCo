@@ -33,6 +33,8 @@ import time
 import torch.nn.functional as F
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
+import numpy as np
+from tools.visualization import plot_tsne_from_validate
 
 
 def train_contrastive(config_path, input_path, output_path):
@@ -1054,6 +1056,16 @@ def train_cifar(rank, world_size, config, console):
             leaf_path_map=leaf_path_map,
             num_nodes=num_nodes).to(device)
 
+
+        leaf_to_superclass_dict = {}
+        for sup_id, (sup_name, leaf_ids) in enumerate(CIFAR100_SUPERCLASSES_ID):
+            for leaf_id in leaf_ids:
+                leaf_to_superclass_dict[leaf_id] = sup_id
+
+        idx_to_class = {idx: name for name, idx in train_dataset.class_to_idx.items()}
+        num_classes = len(idx_to_class)
+        class_names = [train_class2idx[i] for i in range(num_classes)]
+
     elif config.training_contrastive.loss == 'procoun':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
         criterion_scl = ProCoUNLoss(contrast_dim=config.training_contrastive.feat_dim,
@@ -1113,7 +1125,7 @@ def train_cifar(rank, world_size, config, console):
             dist.barrier()
 
         if rank != -1:
-            acc1, many, med, few, _, _ = validate(train_loader, val_loader, model, criterion_ce, config, console)
+            acc1, many, med, few, total_labels, all_preds, all_features = validate(train_loader, val_loader, model, criterion_ce, config, console)
 
             is_best = acc1 > best_acc1
             best_acc1 = max(acc1, best_acc1)
@@ -1134,6 +1146,17 @@ def train_cifar(rank, world_size, config, console):
             top1_val_avg.append(acc1)
             plot_loss(top1_val_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
                       name='ACC_validation.png')
+
+            if epoch % 5 == 0:
+                plot_tsne_from_validate(
+                    all_features=all_features,
+                    total_labels=total_labels,
+                    class_to_superclass=leaf_to_superclass_dict,
+                    class_names=class_names,
+                    title_prefix="ValSet",
+                    save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
+                    epoch=epoch  # e.g. if you're at epoch 20
+                )
 
     if rank != -1:
         # Create a plot of the loss values
@@ -1172,7 +1195,7 @@ def train_cifar(rank, world_size, config, console):
 
         test_loader = val_loader
 
-        acc1, many, med, few, total_labels, all_preds = validate(train_loader, test_loader, model, criterion_ce, config, console)
+        acc1, many, med, few, total_labels, all_preds, all_features = validate(train_loader, test_loader, model, criterion_ce, config, console)
 
         total_labels = total_labels.cpu().numpy()
         all_preds = all_preds.cpu().numpy()
@@ -1199,6 +1222,18 @@ def train_cifar(rank, world_size, config, console):
         console.info('************* Evaluation Report *************')
         console.info(report)
         console.save_log(config.training_path)
+
+        console.info('************* Plot T-sne *************')
+
+        plot_tsne_from_validate(
+            all_features=all_features,
+            total_labels=total_labels,
+            class_to_superclass=leaf_to_superclass_dict,
+            class_names=class_names,
+            title_prefix="ValSet",
+            save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
+            epoch=epoch  # e.g. if you're at epoch 20
+        )
 
 
 def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, config, console):
@@ -1260,8 +1295,8 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
             # tu_loss = (tu1 + tu2) / 2
 
             # scl_loss = (criterion_ce(contrast_logits1, mini_labels) + criterion_ce(contrast_logits2, mini_labels)) / 2
-            # scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
-            scl_loss = contrast_logits
+            scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
+            # scl_loss = contrast_logits
             ce_loss = criterion_ce(ce_logits, mini_labels)
 
             alpha = 1
@@ -1327,6 +1362,7 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
 
     total_logits = torch.empty((0, config.sampling.num_class)).to(config.device)
     total_labels = torch.empty(0, dtype=torch.long).to(config.device)
+    all_features = []
 
     with torch.no_grad():
         end = time.time()
@@ -1340,11 +1376,12 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
 
             images, labels = images.to(config.device), labels.to(config.device)
 
-            _, ce_logits, _ = model(images)
+            feat_mlp, ce_logits, _ = model(images)
             logits = ce_logits
 
             total_logits = torch.cat((total_logits, logits))
             total_labels = torch.cat((total_labels, labels))
+            all_features.append(feat_mlp.cpu().numpy())
 
             batch_time.update(time.time() - end)
 
@@ -1381,7 +1418,9 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
         console.info(
             'Validation: Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: {:.3f}'.format(acc1, many, med, few))
 
-        return acc1, many, med, few, total_labels, all_preds
+        all_features = np.concatenate(all_features, axis=0)
+
+        return acc1, many, med, few, total_labels, all_preds, all_features
 
 
 class AverageMeter(object):
