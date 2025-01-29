@@ -1054,6 +1054,10 @@ def train_cifar(rank, world_size, config, console):
             leaf_path_map=leaf_path_map,
             num_nodes=num_nodes).to(device)
 
+        from models.procom import OnlineClusterManager, LeafFeatureAverager, rebuild_leaf_path_map
+        clusterManager = OnlineClusterManager(device, num_clusters=20, feat_dim=config.training_contrastive.feat_dim)
+        leafAverager = LeafFeatureAverager(device, num_leaves=100, feat_dim=config.training_contrastive.feat_dim)
+
 
     elif config.training_contrastive.loss == 'procoun':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
@@ -1092,8 +1096,10 @@ def train_cifar(rank, world_size, config, console):
 
         adjust_lr(optimizer, epoch, config)
 
+        # ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
+        #                                         config, console)
         ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
-                                                config, console)
+                                                config, console, leafAverager, clusterManager)
         # ce_loss_all, scl_loss_all, top1, tu_loss_all = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
         #                                         config, console)
 
@@ -1202,11 +1208,15 @@ def train_cifar(rank, world_size, config, console):
         console.save_log(config.training_path)
 
 
-def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, config, console):
+def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, config, console, leafAverager, clusterManager):
     model.train()
 
     if hasattr(criterion_scl, "_hook_before_epoch"):
         criterion_scl._hook_before_epoch()
+
+    from models.procom import rebuild_leaf_path_map
+    leaf_path_map = rebuild_leaf_path_map(leafAverager, clusterManager)
+    criterion_scl.leaf_path_map = leaf_path_map
 
     batch_time = AverageMeter('Time', ':6.3f')
     ce_loss_all = AverageMeter('CE_Loss', ':.4e')
@@ -1248,7 +1258,30 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
             _, f2, f3 = torch.split(feat_mlp, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
             ce_logits, _, __ = torch.split(ce_logits, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
 
+            for i in range(len(mini_labels)):
+                leaf_id = mini_labels[i].item()
+                z = f2[i].detach()
+                leafAverager.update_leaf_feat(leaf_id, z)
+            for i in range(len(mini_labels)):
+                leaf_id = mini_labels[i].item()
+                avg_feat = leafAverager.mean_feat[leaf_id]
+                cluster_id = clusterManager.assign_leaf_to_cluster(avg_feat)
+                # you could also update with the sample's z directly:
+                clusterManager.update_center(cluster_id, f2[i])
+
             contrast_logits1 = criterion_scl(f2, mini_labels)
+
+            for i in range(len(mini_labels)):
+                leaf_id = mini_labels[i].item()
+                z = f3[i].detach()
+                leafAverager.update_leaf_feat(leaf_id, z)
+            for i in range(len(mini_labels)):
+                leaf_id = mini_labels[i].item()
+                avg_feat = leafAverager.mean_feat[leaf_id]
+                cluster_id = clusterManager.assign_leaf_to_cluster(avg_feat)
+                # you could also update with the sample's z directly:
+                clusterManager.update_center(cluster_id, f3[i])
+
             contrast_logits2 = criterion_scl(f3, mini_labels)
 
             # contrast_logits1, tu1 = criterion_scl(f2, mini_labels)
