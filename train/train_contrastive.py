@@ -1201,7 +1201,7 @@ def train_cifar(rank, world_size, config, console):
         console.save_log(config.training_path)
 
 
-def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, config, console, leafAverager, clusterManager):
+def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, config, console):
     model.train()
 
     if hasattr(criterion_scl, "_hook_before_epoch"):
