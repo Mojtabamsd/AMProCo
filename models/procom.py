@@ -105,37 +105,3 @@ class HierarchicalProCoWrapper(nn.Module):
         return multi_hot
 
 
-class MultiProtoHierarchy(nn.Module):
-    def __init__(self, backbone, hierarchy_tree, embed_dim, superclass_prototypes=2):
-        super().__init__()
-        self.backbone = backbone
-        self.tree = hierarchy_tree
-        self.embed_dim = embed_dim
-        self.superclass_prototypes = superclass_prototypes
-
-        self.node_params = nn.ModuleDict()
-        for node in self.tree.all_nodes:
-            if self.is_superclass(node):
-                # e.g. store P prototypes
-                param_dict = nn.ParameterDict()
-                for p in range(self.superclass_prototypes):
-                    mu_init = nn.Parameter(F.normalize(torch.randn(embed_dim), dim=0))
-                    alpha_init = nn.Parameter(torch.tensor(float(embed_dim))) # or a better init
-                    param_dict[f"mu_{p}"] = mu_init
-                    param_dict[f"alpha_{p}"] = alpha_init
-                self.node_params[node] = param_dict
-            else:
-                # single prototype
-                mu_init = nn.Parameter(F.normalize(torch.randn(embed_dim), dim=0))
-                alpha_init = nn.Parameter(torch.tensor(float(embed_dim)))
-                param_dict = nn.ParameterDict({"mu": mu_init, "alpha": alpha_init})
-                self.node_params[node] = param_dict
-    ...
-
-    def is_superclass(self, node):
-        """Return True if the node is a superclass (multiple prototypes), else False."""
-        # e.g., if node in [100..119]
-        return (node >= 100 and node <= 119)
-
-
-
