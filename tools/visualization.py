@@ -160,12 +160,12 @@ def plot_tsne_from_validate(
     leaf_cb.set_label("Leaf Label Index")
 
     # (Optional) text labels for small subset
-    # for i in range(50):  # label 50 random points
-    #     idx_pt = random.randint(0, len(feats_2d)-1)
-    #     x, y = feats_2d[idx_pt]
-    #     leaf_id = labels_sub[idx_pt]
-    #     name = class_names[leaf_id] if class_names else str(leaf_id)
-    #     leaf_ax.text(x, y, name, fontsize=6)
+    for i in range(50):  # label 50 random points
+        idx_pt = random.randint(0, len(feats_2d)-1)
+        x, y = feats_2d[idx_pt]
+        leaf_id = labels_sub[idx_pt]
+        name = class_names[leaf_id] if class_names else str(leaf_id)
+        leaf_ax.text(x, y, name, fontsize=6)
 
     # Save or show
     if save_dir is not None:
