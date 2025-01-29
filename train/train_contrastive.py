@@ -1098,6 +1098,8 @@ def train_cifar(rank, world_size, config, console):
 
         # ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
         #                                         config, console)
+        clusterManager = []
+        leafAverager = []
         ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
                                                 config, console, leafAverager, clusterManager)
         # ce_loss_all, scl_loss_all, top1, tu_loss_all = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
