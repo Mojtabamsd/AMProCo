@@ -1265,7 +1265,7 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
             ce_loss = criterion_ce(ce_logits, mini_labels)
 
             alpha = 1
-            if epoch > 100:
+            if epoch > 200:
                 lambda_ = 0.1
             else:
                 lambda_ = 1

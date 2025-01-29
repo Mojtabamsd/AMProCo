@@ -105,7 +105,7 @@ class IMBALANCECIFAR100(IMBALANCECIFAR10):
     cls_num = 100
 
 
-CIFAR100_SUPERCLASSES = [
+CIFAR100_SUPERCLASSES_OFFICIAL = [
     ('aquatic_mammals', ['beaver', 'dolphin', 'otter', 'seal', 'whale']),
     ('fish', ['aquarium_fish', 'flatfish', 'ray', 'shark', 'trout']),
     ('flowers', ['orchid', 'poppy', 'rose', 'sunflower', 'tulip']),
@@ -128,6 +128,49 @@ CIFAR100_SUPERCLASSES = [
     ('vehicles_2', ['lawn_mower', 'rocket', 'streetcar', 'tank', 'tractor']),
 ]
 
+
+CIFAR100_SUPERCLASSES = [
+    # 1) Natural landscapes / scenes (mostly large, outdoor visuals)
+    ('sky_landscapes',       ['cloud', 'forest', 'mountain', 'plain', 'sea']),
+    # 2) Trees (visually distinct tall plants)
+    ('trees',                ['maple_tree', 'oak_tree', 'palm_tree', 'pine_tree', 'willow_tree']),
+    # 3) Flowers (colorful, petal-based plants)
+    ('flowers',              ['orchid', 'poppy', 'rose', 'sunflower', 'tulip']),
+    # 4) Indoor furniture
+    ('domestic_furniture',   ['bed', 'chair', 'couch', 'table', 'wardrobe']),
+    # 5) Kitchenware / utensils
+    ('kitchenware',          ['bottle', 'bowl', 'can', 'cup', 'plate']),
+    # 6) Gadgets (electronic or mechanical devices)
+    ('gadgets',              ['clock', 'keyboard', 'lamp', 'telephone', 'television']),
+    # 7) Land vehicles
+    ('vehicles_land',        ['bicycle', 'bus', 'motorcycle', 'pickup_truck', 'train']),
+    # 8) Other vehicles / machinery
+    ('vehicles_other',       ['lawn_mower', 'rocket', 'streetcar', 'tank', 'tractor']),
+    # 9) Small mammals (often household or small wild creatures)
+    ('small_mammals',        ['hamster', 'mouse', 'rabbit', 'shrew', 'squirrel']),
+    # 10) Medium-sized mammals
+    ('medium_mammals',       ['fox', 'porcupine', 'possum', 'raccoon', 'skunk']),
+    # 11) Large carnivorous mammals
+    ('large_mammals',        ['bear', 'leopard', 'lion', 'tiger', 'wolf']),
+    # 12) Big or farm-like mammals
+    ('farm_mammals',         ['camel', 'cattle', 'chimpanzee', 'elephant', 'kangaroo']),
+    # 13) People (human categories)
+    ('people',               ['baby', 'boy', 'girl', 'man', 'woman']),
+    # 14) Aquatic mammals (or semi-aquatic)
+    ('aquatic_mammals',      ['beaver', 'dolphin', 'otter', 'seal', 'whale']),
+    # 15) Invertebrates (mostly marine or ground invertebrates)
+    ('invertebrates',        ['crab', 'lobster', 'snail', 'spider', 'worm']),
+    # 16) Insects
+    ('insects',              ['bee', 'beetle', 'butterfly', 'caterpillar', 'cockroach']),
+    # 17) Reptiles (including dinosaur, loosely)
+    ('reptiles',             ['crocodile', 'dinosaur', 'lizard', 'snake', 'turtle']),
+    # 18) Fruits & vegetables
+    ('fruit_veg',            ['apple', 'mushroom', 'orange', 'pear', 'sweet_pepper']),
+    # 19) Fish
+    ('fish',                 ['aquarium_fish', 'flatfish', 'ray', 'shark', 'trout']),
+    # 20) Structures (large man-made or architectural scenes)
+    ('structures',           ['bridge', 'castle', 'house', 'road', 'skyscraper']),
+]
 
 
 if __name__ == '__main__':
