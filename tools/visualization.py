@@ -151,7 +151,7 @@ def plot_tsne_from_validate(
     sc1 = leaf_ax.scatter(
         feats_2d[:, 0], feats_2d[:, 1],
         c=labels_sub,
-        cmap='tab20',
+        cmap='nipy_spectral',
         alpha=0.7,
         s=10
     )
@@ -189,7 +189,7 @@ def plot_tsne_from_validate(
         sc2 = super_ax.scatter(
             feats_2d[:, 0], feats_2d[:, 1],
             c=super_labels_sub,
-            cmap='tab10',
+            cmap='tab20',
             alpha=0.7,
             s=10
         )
