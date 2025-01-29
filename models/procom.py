@@ -152,6 +152,7 @@ class HierarchicalProCoWrapper(nn.Module):
         #    We call the ProCoLoss forward with labels=None so it doesn't do the standard single-label scatter.
         node_logits = self.proco_loss(features, labels=None)
 
+        self.K = 5
         # 3) Hard Negative Mining => Build multi-label target
         if leaf_labels is not None:
             targets = build_hard_neg_targets(node_logits, leaf_labels, self.leaf_path_map, self.K)
