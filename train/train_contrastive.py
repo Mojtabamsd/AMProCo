@@ -1144,7 +1144,7 @@ def train_cifar(rank, world_size, config, console):
             plot_loss(top1_val_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
                       name='ACC_validation.png')
 
-            if epoch % 5 == 0:
+            if epoch % 20 == 0:
                 plot_tsne_from_validate(
                     all_features=all_features,
                     total_labels=total_labels,
