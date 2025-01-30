@@ -1082,20 +1082,32 @@ def train_cifar(rank, world_size, config, console):
     elif config.training_contrastive.loss == 'procom':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
 
-        root_node_id = 140
-        super_offset_1 = 100
-        super_offset_2 = 120
+        SUPERCLASS_PROTOTYPES = 3
+
+        super_to_protos = {}
+        base_offset = 100  # first prototype
+
+        for i in range(20):  # 20 superclasses
+            proto_ids = []
+            for p in range(SUPERCLASS_PROTOTYPES):
+                offset = base_offset + p * 20  # each prototype range is 20 wide
+                proto_id = offset + i  # e.g. if p=0 => [100..119], p=1 => [120..139], etc.
+                proto_ids.append(proto_id)
+            super_to_protos[i] = proto_ids
+
+        root_node_id = base_offset + SUPERCLASS_PROTOTYPES * 20  # e.g. 100 + 2*20 = 140
+        num_nodes = 100 + (20 * SUPERCLASS_PROTOTYPES) + 1  # 141 if P=2
 
         leaf_path_map = {}
         for i, (sname, leaf_list) in enumerate(CIFAR100_SUPERCLASSES_ID):
-            proto1_id = super_offset_1 + i  # [100..119]
-            proto2_id = super_offset_2 + i  # [200..219]
+            # 'i' is the superclass index in [0..19]
+            proto_ids = super_to_protos[i]  # e.g. [100, 120] if P=2
             for leaf in leaf_list:
-                # Root -> proto1 -> proto2 -> leaf
-                leaf_path_map[leaf] = [root_node_id, proto1_id, proto2_id, leaf]
+                # path is [root, proto_ids..., leaf]
+                path = [root_node_id] + proto_ids + [leaf]
+                leaf_path_map[leaf] = path
 
         leaf_node_ids = list(range(100))
-        num_nodes = 1 + 20 + 20 + 100  # 141
 
         criterion_scl = HierarchicalProCoWrapper(
             proco_loss=ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
