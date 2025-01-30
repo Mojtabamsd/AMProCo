@@ -167,7 +167,8 @@ def plot_tsne_from_validate(
     boundaries_leaf = np.arange(num_leaf_classes + 1) - 0.5
     norm_leaf = mcolors.BoundaryNorm(boundaries_leaf, ncolors=num_leaf_classes)
 
-    leaf_fig, leaf_ax = plt.subplots(figsize=(8, 6))
+    leaf_fig, leaf_ax = plt.subplots(figsize=(14, 18), dpi=400)
+    leaf_fig.tight_layout()
     sc1 = leaf_ax.scatter(
         feats_2d[:, 0],
         feats_2d[:, 1],
@@ -181,17 +182,18 @@ def plot_tsne_from_validate(
 
     # Discrete colorbar with ticks at every integer in [0..num_leaf_classes-1]
     cbar1 = leaf_fig.colorbar(sc1, ax=leaf_ax, ticks=range(num_leaf_classes))
+    cbar1.ax.tick_params(labelsize=6)
     if leaf_class_names is not None:
         cbar1.ax.set_yticklabels(leaf_class_names[:num_leaf_classes])
     cbar1.set_label("Leaf Class")
 
-    # # (Optional) text labels for small subset
-    # for i in range(50):  # label 50 random points
-    #     idx_pt = random.randint(0, len(feats_2d)-1)
-    #     x, y = feats_2d[idx_pt]
-    #     leaf_id = labels_sub[idx_pt]
-    #     name = leaf_class_names[leaf_id] if leaf_class_names else str(leaf_id)
-    #     leaf_ax.text(x, y, name, fontsize=6)
+    # (Optional) text labels for small subset
+    for i in range(100):  # label 50 random points
+        idx_pt = random.randint(0, len(feats_2d)-1)
+        x, y = feats_2d[idx_pt]
+        leaf_id = labels_sub[idx_pt]
+        name = leaf_class_names[leaf_id] if leaf_class_names else str(leaf_id)
+        leaf_ax.text(x, y, name, fontsize=3)
 
     # Save or show leaf figure
     if save_dir is not None:
@@ -219,7 +221,7 @@ def plot_tsne_from_validate(
         boundaries_super = np.arange(num_super_classes + 1) - 0.5
         norm_super = mcolors.BoundaryNorm(boundaries_super, ncolors=num_super_classes)
 
-        super_fig, super_ax = plt.subplots(figsize=(8, 6))
+        super_fig, super_ax = plt.subplots(figsize=(14, 18), dpi=300)
         sc2 = super_ax.scatter(
             feats_2d[:, 0],
             feats_2d[:, 1],

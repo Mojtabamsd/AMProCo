@@ -1194,7 +1194,7 @@ def train_cifar(rank, world_size, config, console):
                     total_labels=total_labels,
                     class_to_superclass=leaf_to_superclass_dict,
                     leaf_class_names=leaf_class_names,
-                    super_class_names=superclass_name,
+                    super_class_names=super_class_names,
                     title_prefix="ValSet",
                     save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
                     epoch=epoch  # e.g. if you're at epoch 20
@@ -1272,7 +1272,7 @@ def train_cifar(rank, world_size, config, console):
             total_labels=total_labels,
             class_to_superclass=leaf_to_superclass_dict,
             leaf_class_names=leaf_class_names,
-            super_class_names=superclass_name,
+            super_class_names=super_class_names,
             title_prefix="ValSet",
             save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
             epoch=epoch  # e.g. if you're at epoch 20
