@@ -1073,9 +1073,9 @@ def train_cifar(rank, world_size, config, console):
             leaf_ids = [train_class2idx[leaf_name] for leaf_name in leaf_names]
             CIFAR100_SUPERCLASSES_ID.append((superclass_name, leaf_ids))
 
-        root_node_id = 120
+        root_node_id = 140
         super_offset_1 = 100
-        super_offset_2 = 200
+        super_offset_2 = 120
 
         leaf_path_map = {}
         for i, (sname, leaf_list) in enumerate(CIFAR100_SUPERCLASSES_ID):
