@@ -83,37 +83,40 @@ def tsne_plot(latent_vectors, all_labels, int_to_label, out_path):
 
 import os
 import random
-import torch
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 
 from sklearn.manifold import TSNE
 
+
 def plot_tsne_from_validate(
-    all_features,     # [N, feature_dim] numpy array or tensor
-    total_labels,     # [N], each in [0..(num_classes-1)]
-    class_to_superclass=None,  # dict: leaf_id -> superclass_id if desired
-    class_names=None,          # list of length num_classes with string names
-    num_samples=2000,
-    seed=42,
-    title_prefix="",
-    save_dir=None,    # directory path where figures will be saved (e.g. "plots/")
-    epoch=None        # optional epoch number for filename
+        all_features,  # [N, feature_dim] numpy array or tensor
+        total_labels,  # [N], each in [0..(num_leaf_classes-1)]
+        class_to_superclass=None,  # dict: leaf_id -> super_id
+        leaf_class_names=None,  # list of leaf class names, index = leaf_id
+        super_class_names=None,  # list of superclass names, index = super_id
+        num_samples=2000,
+        seed=42,
+        title_prefix="",
+        save_dir=None,
+        epoch=None
 ):
     """
     Runs t-SNE on a subset of the data and plots:
-      1) Color by leaf label
-      2) If class_to_superclass is provided, color by superclass
+      1) Discrete color by leaf label (with labeled colorbar).
+      2) If class_to_superclass is provided, discrete color by superclass (with labeled colorbar).
 
     all_features: 2D array/tensor [N, D] of embeddings
     total_labels: 1D array/tensor [N] of leaf labels
     class_to_superclass: dict { leaf_id -> super_id }, optional
-    class_names: optional list (index -> class name) for text labeling
+    leaf_class_names: optional list of length #leaf_classes for labeling colorbar
+    super_class_names: optional list of length #super_classes for labeling colorbar
     num_samples: how many points to sample for t-SNE
     seed: random seed for reproducible subsampling + t-SNE init
     title_prefix: string prefix for plot title
-    save_dir: if provided, figures will be saved to this directory
-    epoch: optional epoch number for naming the output files
+    save_dir: directory path to save figures (or None to just show)
+    epoch: optional epoch for file naming
     """
 
     # 0) Convert to numpy if they're torch tensors
@@ -138,38 +141,60 @@ def plot_tsne_from_validate(
 
     # 2) Run t-SNE
     print("[plot_tsne_from_validate] Running t-SNE...")
-    tsne = TSNE(n_components=2, perplexity=30, init='pca',
-                learning_rate='auto', random_state=seed, verbose=1)
+    tsne = TSNE(
+        n_components=2,
+        perplexity=30,
+        init='pca',
+        learning_rate='auto',
+        random_state=seed,
+        verbose=1
+    )
     feats_2d = tsne.fit_transform(feats_sub)  # shape [num_samples, 2]
 
     # If save_dir is specified, ensure the directory exists
     if save_dir is not None:
         os.makedirs(save_dir, exist_ok=True)
 
-    # 3) Plot color by leaf label
-    leaf_fig, leaf_ax = plt.subplots(figsize=(7, 6))
+    # 3) Plot color by LEAF label (Discrete colormap)
+    max_leaf_id = int(labels_sub.max())
+    num_leaf_classes = max_leaf_id + 1
+    if leaf_class_names is not None:
+        # sanity check: ensure len(leaf_class_names) >= num_leaf_classes
+        num_leaf_classes = len(leaf_class_names)
+
+    # Build a discrete colormap for the leaf classes
+    leaf_cmap = plt.cm.get_cmap('nipy_spectral', num_leaf_classes)
+    boundaries_leaf = np.arange(num_leaf_classes + 1) - 0.5
+    norm_leaf = mcolors.BoundaryNorm(boundaries_leaf, ncolors=num_leaf_classes)
+
+    leaf_fig, leaf_ax = plt.subplots(figsize=(8, 6))
     sc1 = leaf_ax.scatter(
-        feats_2d[:, 0], feats_2d[:, 1],
+        feats_2d[:, 0],
+        feats_2d[:, 1],
         c=labels_sub,
-        cmap='nipy_spectral',
+        cmap=leaf_cmap,
+        norm=norm_leaf,
         alpha=0.7,
         s=10
     )
     leaf_ax.set_title(f"{title_prefix} t-SNE (Leaf labels)")
-    leaf_cb = leaf_fig.colorbar(sc1, ax=leaf_ax, fraction=0.046, pad=0.04)
-    leaf_cb.set_label("Leaf Label Index")
 
-    # (Optional) text labels for small subset
-    for i in range(50):  # label 50 random points
-        idx_pt = random.randint(0, len(feats_2d)-1)
-        x, y = feats_2d[idx_pt]
-        leaf_id = labels_sub[idx_pt]
-        name = class_names[leaf_id] if class_names else str(leaf_id)
-        leaf_ax.text(x, y, name, fontsize=6)
+    # Discrete colorbar with ticks at every integer in [0..num_leaf_classes-1]
+    cbar1 = leaf_fig.colorbar(sc1, ax=leaf_ax, ticks=range(num_leaf_classes))
+    if leaf_class_names is not None:
+        cbar1.ax.set_yticklabels(leaf_class_names[:num_leaf_classes])
+    cbar1.set_label("Leaf Class")
 
-    # Save or show
+    # # (Optional) text labels for small subset
+    # for i in range(50):  # label 50 random points
+    #     idx_pt = random.randint(0, len(feats_2d)-1)
+    #     x, y = feats_2d[idx_pt]
+    #     leaf_id = labels_sub[idx_pt]
+    #     name = leaf_class_names[leaf_id] if leaf_class_names else str(leaf_id)
+    #     leaf_ax.text(x, y, name, fontsize=6)
+
+    # Save or show leaf figure
     if save_dir is not None:
-        # Construct file name
         if epoch is not None:
             leaf_filename = f"tsne_leaf_epoch{epoch}.png"
         else:
@@ -179,23 +204,37 @@ def plot_tsne_from_validate(
         print(f"[plot_tsne_from_validate] Saved leaf-level t-SNE to {leaf_path}")
     else:
         plt.show()
-
     plt.close(leaf_fig)
 
-    # 4) (Optional) color by SUPERCLASS
+    # 4) (Optional) color by SUPERCLASS (Discrete colormap)
     if class_to_superclass is not None:
         super_labels_sub = np.array([class_to_superclass[l] for l in labels_sub])
-        super_fig, super_ax = plt.subplots(figsize=(7, 6))
+        max_super_id = int(super_labels_sub.max())
+        num_super_classes = max_super_id + 1
+        if super_class_names is not None:
+            num_super_classes = len(super_class_names)
+
+        # e.g. 'tab20' if you have <= 20 superclasses
+        super_cmap = plt.cm.get_cmap('tab20', num_super_classes)
+        boundaries_super = np.arange(num_super_classes + 1) - 0.5
+        norm_super = mcolors.BoundaryNorm(boundaries_super, ncolors=num_super_classes)
+
+        super_fig, super_ax = plt.subplots(figsize=(8, 6))
         sc2 = super_ax.scatter(
-            feats_2d[:, 0], feats_2d[:, 1],
+            feats_2d[:, 0],
+            feats_2d[:, 1],
             c=super_labels_sub,
-            cmap='tab20',
+            cmap=super_cmap,
+            norm=norm_super,
             alpha=0.7,
             s=10
         )
         super_ax.set_title(f"{title_prefix} t-SNE (Superclasses)")
-        super_cb = super_fig.colorbar(sc2, ax=super_ax, fraction=0.046, pad=0.04)
-        super_cb.set_label("Superclass Index")
+
+        cbar2 = super_fig.colorbar(sc2, ax=super_ax, ticks=range(num_super_classes))
+        if super_class_names is not None:
+            cbar2.ax.set_yticklabels(super_class_names[:num_super_classes])
+        cbar2.set_label("Superclass")
 
         if save_dir is not None:
             if epoch is not None:
@@ -211,4 +250,5 @@ def plot_tsne_from_validate(
         plt.close(super_fig)
 
     print("[plot_tsne_from_validate] Done.")
+
 

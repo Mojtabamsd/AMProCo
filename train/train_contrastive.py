@@ -1017,6 +1017,21 @@ def train_cifar(rank, world_size, config, console):
 
     config.cls_num = len(cls_num_list)
 
+    train_class2idx = train_dataset.class_to_idx
+    CIFAR100_SUPERCLASSES_ID = []
+    for superclass_name, leaf_names in CIFAR100_SUPERCLASSES:
+        leaf_ids = [train_class2idx[leaf_name] for leaf_name in leaf_names]
+        CIFAR100_SUPERCLASSES_ID.append((superclass_name, leaf_ids))
+
+    leaf_to_superclass_dict = {}
+    super_class_names = []
+    for sup_id, (sup_name, leaf_ids) in enumerate(CIFAR100_SUPERCLASSES_ID):
+        super_class_names.append(sup_name)
+        for leaf_id in leaf_ids:
+            leaf_to_superclass_dict[leaf_id] = sup_id
+
+    leaf_class_names = [name for name, idx in train_dataset.class_to_idx.items()]
+
     if config.training_contrastive.loss == 'proco':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
         criterion_scl = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
@@ -1067,12 +1082,6 @@ def train_cifar(rank, world_size, config, console):
     elif config.training_contrastive.loss == 'procom':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
 
-        train_class2idx = train_dataset.class_to_idx
-        CIFAR100_SUPERCLASSES_ID = []
-        for superclass_name, leaf_names in CIFAR100_SUPERCLASSES:
-            leaf_ids = [train_class2idx[leaf_name] for leaf_name in leaf_names]
-            CIFAR100_SUPERCLASSES_ID.append((superclass_name, leaf_ids))
-
         root_node_id = 140
         super_offset_1 = 100
         super_offset_2 = 120
@@ -1096,13 +1105,6 @@ def train_cifar(rank, world_size, config, console):
             leaf_node_ids=leaf_node_ids,
             leaf_path_map=leaf_path_map,
             num_nodes=num_nodes).to(device)
-
-        leaf_to_superclass_dict = {}
-        for sup_id, (sup_name, leaf_ids) in enumerate(CIFAR100_SUPERCLASSES_ID):
-            for leaf_id in leaf_ids:
-                leaf_to_superclass_dict[leaf_id] = sup_id
-
-        class_names = [name for name, idx in train_dataset.class_to_idx.items()]
 
 
     elif config.training_contrastive.loss == 'procoun':
@@ -1191,7 +1193,8 @@ def train_cifar(rank, world_size, config, console):
                     all_features=all_features,
                     total_labels=total_labels,
                     class_to_superclass=leaf_to_superclass_dict,
-                    class_names=class_names,
+                    leaf_class_names=leaf_class_names,
+                    super_class_names=superclass_name,
                     title_prefix="ValSet",
                     save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
                     epoch=epoch  # e.g. if you're at epoch 20
@@ -1268,7 +1271,8 @@ def train_cifar(rank, world_size, config, console):
             all_features=all_features,
             total_labels=total_labels,
             class_to_superclass=leaf_to_superclass_dict,
-            class_names=class_names,
+            leaf_class_names=leaf_class_names,
+            super_class_names=superclass_name,
             title_prefix="ValSet",
             save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
             epoch=epoch  # e.g. if you're at epoch 20
