@@ -1032,29 +1032,10 @@ def train_cifar(rank, world_size, config, console):
 
     leaf_class_names = [name for name, idx in train_dataset.class_to_idx.items()]
 
-    prototypes_per_superclass = [
-        2,
-        3,
-        1,
-        2,
-        2,
-        1,
-        3,
-        1,
-        2,
-        2,
-        1,
-        1,
-        2,
-        1,
-        3,
-        2,
-        2,
-        1,
-        1,
-        2,
-    ]
-    assert len(prototypes_per_superclass) == 20
+    prototypes_per_superclass = [2, 3, 1, 2, 2, 1, 1, 3, 2, 1,  # first 10
+                                 2, 2, 4, 1, 1, 2, 2, 1, 3, 2]  # second 10
+
+    assert len(prototypes_per_superclass) == 20, "We have 20 superclasses"
 
     if config.training_contrastive.loss == 'proco':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
@@ -1108,33 +1089,33 @@ def train_cifar(rank, world_size, config, console):
 
         # SUPERCLASS_PROTOTYPES = 3
 
-        super_to_proto_ids = {}
-        running_offset = 100  # first prototype
+        offset = 100
+        super_to_protos = {}  # maps superclass_index -> list of prototype IDs
+        for i, (sname, leaf_list) in enumerate(CIFAR100_SUPERCLASSES_ID):
+            p_i = prototypes_per_superclass[i]
+            proto_ids = []
+            for _ in range(p_i):
+                proto_ids.append(offset)
+                offset += 1
+            super_to_protos[i] = proto_ids  # e.g. [100, 101] for i=0 if p_i=2
 
-        for i, (sname, leaf_ids) in enumerate(CIFAR100_SUPERCLASSES_ID):
-            p_count = prototypes_per_superclass[i]  # how many prototypes for this superclass
-            proto_ids = list(range(running_offset, running_offset + p_count))
-            super_to_proto_ids[i] = proto_ids
-            running_offset += p_count
-
-        root_node_id = running_offset
-        running_offset += 1  # root takes one ID
-
-        sum_prototypes = sum(prototypes_per_superclass)
-        num_nodes = 100 + sum_prototypes + 1
-
-        print("sum_prototypes =", sum_prototypes)
-        print("root_node_id =", root_node_id)
-        print("num_nodes =", num_nodes)
+        root_node_id = offset
+        offset += 1  # reserve 1 ID for root
 
         leaf_path_map = {}
         for i, (sname, leaf_list) in enumerate(CIFAR100_SUPERCLASSES_ID):
-            # e.g. super_to_proto_ids[i] might be [100,101] if we said 2 prototypes
-            proto_ids = super_to_proto_ids[i]
+            proto_ids = super_to_protos[i]
             for leaf in leaf_list:
-                # path = [root, *proto_ids, leaf]
-                path_nodes = [root_node_id] + proto_ids + [leaf]
-                leaf_path_map[leaf] = path_nodes
+                # path = [all prototypes of this superclass, plus leaf, plus root]
+                # the order is up to you. One typical approach is [root, prototypes..., leaf].
+                path = [root_node_id] + proto_ids + [leaf]
+                leaf_path_map[leaf] = path
+
+        num_leaves = 100
+        sum_protos = sum(prototypes_per_superclass)  # e.g. 2+3+1+2+... etc.
+        num_nodes = num_leaves + sum_protos + 1  # must be > max ID assigned
+
+        assert (offset - 1) < num_nodes, "All IDs must be in range"
 
         leaf_node_ids = list(range(100))
 

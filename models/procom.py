@@ -159,26 +159,31 @@ class HierarchicalProCoWrapper(nn.Module):
         leaf_logits = torch.zeros(N, num_leaves, device=features.device)
 
         for leaf_idx, leaf_id in enumerate(self.leaf_node_ids):
-            path_nodes = self.leaf_path_map[leaf_id]  # e.g. [120, 100, 200, leaf]
-            # root, sup1, sup2, leaf
-            root_log = node_logits[:, path_nodes[0]]
-            sup1_log = node_logits[:, path_nodes[1]]
-            sup2_log = node_logits[:, path_nodes[2]]
-            leaf_log = node_logits[:, path_nodes[3]]
 
-            # best-match approach
-            best_sup = torch.max(sup1_log, sup2_log)
-            leaf_logits[:, leaf_idx] = root_log + best_sup + leaf_log
+            path_nodes = self.leaf_path_map[leaf_id]  # e.g. [root, p0, p1, leaf] (2 prototypes => 4 nodes)
+            root_log = node_logits[:, path_nodes[0]]
+            proto_logs = [node_logits[:, pid] for pid in path_nodes[1:-1]]
+            leaf_log = node_logits[:, path_nodes[-1]]
+
+            # Best match or mixture?
+            best_proto_log, _ = torch.max(torch.stack(proto_logs, dim=1), dim=1)  # shape [N]
+            leaf_logits[:, leaf_idx] = root_log + best_proto_log + leaf_log
 
         return leaf_logits
 
     def _make_multi_hot(self, leaf_labels):
+        """
+        For each sample i:
+          - retrieve leaf_id
+          - get path = leaf_path_map[leaf_id] => e.g. [root, protoX, protoY, leaf_id]
+          - set multi_hot[i, path] = 1
+        """
         N = leaf_labels.size(0)
         multi_hot = torch.zeros(N, self.num_nodes, device=leaf_labels.device)
         for i in range(N):
             leaf_id = leaf_labels[i].item()
-            path = self.leaf_path_map[leaf_id]  # [120, 100, 200, leaf]
-            multi_hot[i, path] = 1
+            path_nodes = self.leaf_path_map[leaf_id]
+            multi_hot[i, path_nodes] = 1
         return multi_hot
 
 
