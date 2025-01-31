@@ -1032,8 +1032,8 @@ def train_cifar(rank, world_size, config, console):
 
     leaf_class_names = [name for name, idx in train_dataset.class_to_idx.items()]
 
-    prototypes_per_superclass = [2, 3, 1, 2, 2, 1, 1, 3, 2, 1,  # first 10
-                                 2, 2, 4, 1, 1, 2, 2, 1, 3, 2]  # second 10
+    prototypes_per_superclass = [2, 3, 2, 3, 1, 1, 1, 3, 4, 1,  # first 10
+                                 1, 2, 3, 4, 1, 4, 3, 1, 1, 2]  # second 10
 
     assert len(prototypes_per_superclass) == 20, "We have 20 superclasses"
 
