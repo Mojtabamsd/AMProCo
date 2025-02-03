@@ -1175,6 +1175,8 @@ def train_cifar(rank, world_size, config, console):
                 superclass_feats = cal_feats(model, train_loader, leaf_to_superclass_dict, config)
                 p_star, mixture_params = cal_params(superclass_feats)
 
+                print(p_star)
+
                 offset = 100
                 superclass_to_protos = {}
                 for i, (sname, leaf_list) in enumerate(CIFAR100_SUPERCLASSES_ID):
