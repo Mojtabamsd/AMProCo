@@ -1608,7 +1608,7 @@ def cal_feats(model, train_loader, leaf_to_superclass_dict, config):
             images, leaf_label, img_names = data
         elif len(data) == 2:
             images, leaf_label = data
-        images, leaf_label = images.to(config.device), leaf_label.to(config.device)
+        images, leaf_label = images[0].to(config.device), leaf_label.to(config.device)
         with torch.no_grad():
             z, ce_logits, _ = model(images)
             z = F.normalize(z, p=2, dim=1)  # ensure unit sphere if needed
