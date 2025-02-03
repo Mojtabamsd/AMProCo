@@ -1032,8 +1032,8 @@ def train_cifar(rank, world_size, config, console):
 
     leaf_class_names = [name for name, idx in train_dataset.class_to_idx.items()]
 
-    prototypes_per_superclass = [2, 3, 2, 3, 1, 1, 1, 3, 4, 1,  # first 10
-                                 1, 2, 3, 4, 1, 4, 3, 1, 1, 2]  # second 10
+    prototypes_per_superclass = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  # first 10
+                                 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]  # second 10
 
     assert len(prototypes_per_superclass) == 20, "We have 20 superclasses"
 
@@ -1166,8 +1166,64 @@ def train_cifar(rank, world_size, config, console):
 
         adjust_lr(optimizer, epoch, config)
 
-        ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
-                                                config, console)
+        index = 1
+        if epoch < index:
+            ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
+                                                    config, console)
+        else:
+            if epoch == index:
+                superclass_feats = cal_feats(model, train_loader, leaf_to_superclass_dict, config)
+                p_star, mixture_params = cal_params(superclass_feats)
+
+                offset = 100
+                superclass_to_protos = {}
+                for i, (sname, leaf_list) in enumerate(CIFAR100_SUPERCLASSES_ID):
+                    p_i = p_star[i]
+                    proto_list = []
+                    for comp in range(p_i):
+                        proto_list.append(offset)
+                        offset += 1
+                    superclass_to_protos[i] = proto_list
+
+                root_node_id = offset
+                offset += 1
+                num_nodes = 100 + sum(p_star) + 1
+
+                leaf_path_map = {}
+                for i, (sname, leaf_list) in enumerate(CIFAR100_SUPERCLASSES_ID):
+                    proto_ids = superclass_to_protos[i]
+                    for leaf_id in leaf_list:
+                        # path => [root_node_id] + proto_ids + [leaf_id]
+                        leaf_path_map[leaf_id] = [root_node_id] + proto_ids + [leaf_id]
+
+                leaf_node_ids = list(range(100))
+
+                new_criterion_scl = HierarchicalProCoWrapper(
+                    proco_loss=ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
+                                         temperature=config.training_contrastive.temp,
+                                         num_classes=num_nodes,
+                                         device=device),
+                    leaf_node_ids=leaf_node_ids,
+                    leaf_path_map=leaf_path_map,
+                    num_nodes=num_nodes).to(device)
+
+                for sc_idx in range(20):
+                    p_i = p_star[sc_idx]
+                    proto_list = superclass_to_protos[sc_idx]
+                    for j in range(p_i):
+                        node_id = proto_list[j]
+                        (pi_j, mu_j, kappa_j) = mixture_params[sc_idx][j]
+                        # mu_j is a numpy array of shape [feature_dim]
+                        # ensure it's normalized
+                        mu_j = mu_j / (np.linalg.norm(mu_j) + 1e-12)
+                        # set them in the Estimator
+                        new_criterion_scl.estimator.Ave[node_id] = torch.from_numpy(mu_j).to(device)
+                        new_criterion_scl.estimator.kappa[node_id] = torch.tensor(kappa_j, device=device)
+                        # logC can be updated or left to be updated in next iteration (update_kappa).
+
+            ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl, optimizer,
+                                                        config, console)
+
         # ce_loss_all, scl_loss_all, top1, tu_loss_all = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
         #                                         config, console)
 
@@ -1187,7 +1243,7 @@ def train_cifar(rank, world_size, config, console):
         if is_distributed:
             dist.barrier()
 
-        if rank != -1:
+        if rank == -1:
             acc1, many, med, few, total_labels, all_preds, all_features = validate(train_loader, val_loader, model, criterion_ce, config, console)
 
             is_best = acc1 > best_acc1
@@ -1545,3 +1601,171 @@ def accuracy(output, target, topk=(1,)):
         return res
 
 
+def cal_feats(model, train_loader, leaf_to_superclass_dict, config):
+    superclass_feats = [[] for _ in range(20)]
+    for i, data in train_loader:
+        if len(data) == 3:
+            images, leaf_label, img_names = data
+        elif len(data) == 2:
+            images, leaf_label = data
+        images, leaf_label = images.to(config.device), leaf_label.to(config.device)
+        with torch.no_grad():
+            z, ce_logits, _ = model(images)
+            z = F.normalize(z, p=2, dim=1)  # ensure unit sphere if needed
+        for i in range(len(leaf_label)):
+            sc_idx = leaf_to_superclass_dict[leaf_label[i]]  # e.g. a function returning [0..19]
+            superclass_feats[sc_idx].append(z[i].cpu().numpy())
+
+    return superclass_feats
+
+
+def cal_params(superclass_feats):
+    p_star = []
+    mixture_params = {}  # store (pi_j, mu_j, kappa_j) for each j in [1.. best_k]
+    for sc_idx in range(20):
+        feats_sc = np.array(superclass_feats[sc_idx])  # shape [N_sc, feat_dim]
+        best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=5)
+        p_star.append(best_k)
+        mixture_params[sc_idx] = best_params
+
+    return p_star, mixture_params
+
+
+def find_best_vmf_mixture_bic(feats_sc, k_max=5):
+    """
+    feats_sc: shape [N_sc, feat_dim]
+    returns:
+        best_k: the number of prototypes with the minimal BIC
+        best_params: a list of (pi_j, mu_j, kappa_j) for j=1..best_k
+    """
+    best_k = 1
+    best_bic = float('inf')
+    best_params = None
+    N_sc, dim = feats_sc.shape
+
+    for k in range(1, k_max + 1):
+        # 1) Fit a mixture-of-vMF with k components to feats_sc
+        mixture_params_k = fit_vmf_mixture(feats_sc, k)
+
+        # 2) compute log-likelihood: sum_{i=1..N_sc} log( sum_{j=1..k} pi_j * vmf_pdf(...) )
+        logL = 0.0
+        for i in range(N_sc):
+            x = feats_sc[i]
+            pdf_sum = 0.0
+            for (pi_j, mu_j, kappa_j) in mixture_params_k:
+                pdf_sum += pi_j * vmf_pdf(x, mu_j, kappa_j)
+            logL += np.log(pdf_sum + 1e-20)
+
+        # 3) compute param count
+        #   each component: (dim-1) for mu, 1 for kappa, total k comps => k*(dim)
+        #   plus (k-1) for pi_j. So total = k*(dim) + (k-1).
+        #   or you can do k*(dim -1) + k + (k-1), etc.
+        #   You can approximate it as:
+        param_count = k * (dim) + (k - 1)
+
+        # 4) BIC = -2 * logL + param_count * ln(N_sc)
+        bic_value = -2.0 * logL + param_count * np.log(N_sc)
+
+        if bic_value < best_bic:
+            best_bic = bic_value
+            best_k = k
+            best_params = mixture_params_k
+
+    return best_k, best_params
+
+
+def fit_vmf_mixture(feats_sc, k, max_iter=50):
+    """
+    feats_sc: shape [N, dim]
+    returns list of (pi_j, mu_j, kappa_j) for j=1..k
+    """
+    N, dim = feats_sc.shape
+
+    # 1) Initialize pi_j, mu_j, kappa_j
+    pi = np.ones(k) / k
+    mu = np.random.randn(k, dim)
+    mu = mu / np.linalg.norm(mu, axis=1, keepdims=True)  # normalize
+    kappa = np.ones(k) * dim  # or random init
+
+    # 2) EM loop
+    for _ in range(max_iter):
+        # E-step: compute responsibilities
+        # shape: R[i, j] = pi_j * vMF_pdf(x_i, mu_j, kappa_j)
+        R = np.zeros((N, k))
+
+        for j in range(k):
+            for i in range(N):
+                R[i, j] = pi[j] * vmf_pdf(feats_sc[i], mu[j], kappa[j])
+        R_sum = R.sum(axis=1, keepdims=True) + 1e-30
+        R /= R_sum  # responsibilities
+
+        # M-step: update pi_j
+        Nj = R.sum(axis=0)  # shape [k]
+        pi = Nj / N
+
+        # update mu_j, kappa_j
+        # Weighted average of the x_i
+        for j in range(k):
+            # compute the weighted sum
+            weighted_sum = np.zeros(dim)
+            for i in range(N):
+                weighted_sum += R[i, j] * feats_sc[i]
+            # normalization
+            norm = np.linalg.norm(weighted_sum)
+            if norm < 1e-8:
+                # degenerate, re-init or keep
+                continue
+            new_mu = weighted_sum / norm
+            # compute new kappa
+            # for vMF, we can approximate kappa via:
+            #   Rbar = norm / Nj[j]
+            #   kappa_j ~ (Rbar * (dim - Rbar^2)) / (1 - Rbar^2)
+            Rbar = norm / Nj[j]
+            if Rbar < 1e-6:
+                # degenerate
+                continue
+            new_kappa = (Rbar * (dim - Rbar ** 2)) / (1 - Rbar ** 2 + 1e-12)
+
+            mu[j] = new_mu
+            kappa[j] = new_kappa
+
+    # return final
+    mixture_params_k = []
+    for j in range(k):
+        mixture_params_k.append((pi[j], mu[j], kappa[j]))
+    return mixture_params_k
+
+
+def vmf_pdf(x, mu, kappa):
+    """
+    x, mu: numpy arrays of shape [dim], both assumed unit norm.
+    kappa: float
+    returns the PDF value as a float.
+    """
+    dotval = np.dot(x, mu)  # x, mu in R^dim
+    log_val = kappa * dotval - logC_p(kappa, len(x))
+    return np.exp(log_val)
+
+
+def logC_p(kappa, dim):
+    """
+    Approximate or compute log of the normalization constant C_d(kappa).
+    For large kappa, or dimension not too big, you can do a piecewise approach.
+    Or call SciPy if available.
+    """
+    # If you have scip.special.ive, you can do:
+    #   val = ive(dim/2 - 1, kappa)  # i_{nu}(kappa)
+    #   logC = np.log(val) + kappa - (dim/2 - 1)*np.log(kappa+1e-12)
+    # Return that. Example:
+    import math
+    from scipy.special import ive
+
+    if kappa < 1e-8:
+        # near zero, logC_p ~ -log(Surface of sphere), roughly
+        # e.g. log((2*pi)^(d/2) / Gamma(d/2)) ...
+        # For simplicity, return a constant. It's not critical for small kappa.
+        return (dim/2)*math.log(2*math.pi)  # crude
+    val = ive(dim/2 - 1, kappa)
+    val = max(val, 1e-300)
+    logC = math.log(val) + kappa - (dim/2 - 1)*math.log(kappa+1e-12)
+    return logC
