@@ -1166,7 +1166,7 @@ def train_cifar(rank, world_size, config, console):
 
         adjust_lr(optimizer, epoch, config)
 
-        index = 1
+        index = 0
         if epoch < index:
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
                                                     config, console)
@@ -1612,8 +1612,9 @@ def cal_feats(model, train_loader, leaf_to_superclass_dict, config):
         with torch.no_grad():
             z, ce_logits, _ = model(images)
             z = F.normalize(z, p=2, dim=1)  # ensure unit sphere if needed
+        leaf_label_array = leaf_label.cpu().numpy()
         for i in range(len(leaf_label)):
-            sc_idx = leaf_to_superclass_dict[leaf_label[i]]  # e.g. a function returning [0..19]
+            sc_idx = leaf_to_superclass_dict[leaf_label_array[i]]  # e.g. a function returning [0..19]
             superclass_feats[sc_idx].append(z[i].cpu().numpy())
 
     return superclass_feats
