@@ -1166,7 +1166,7 @@ def train_cifar(rank, world_size, config, console):
 
         adjust_lr(optimizer, epoch, config)
 
-        index = 0
+        index = 150
         if epoch < index:
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
                                                     config, console)
@@ -1245,7 +1245,7 @@ def train_cifar(rank, world_size, config, console):
         if is_distributed:
             dist.barrier()
 
-        if rank == -1:
+        if rank != -1:
             acc1, many, med, few, total_labels, all_preds, all_features = validate(train_loader, val_loader, model, criterion_ce, config, console)
 
             is_best = acc1 > best_acc1
