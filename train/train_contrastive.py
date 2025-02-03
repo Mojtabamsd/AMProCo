@@ -1603,7 +1603,7 @@ def accuracy(output, target, topk=(1,)):
 
 def cal_feats(model, train_loader, leaf_to_superclass_dict, config):
     superclass_feats = [[] for _ in range(20)]
-    for i, data in train_loader:
+    for i, data in enumerate(train_loader):
         if len(data) == 3:
             images, leaf_label, img_names = data
         elif len(data) == 2:
