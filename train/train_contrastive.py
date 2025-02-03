@@ -1629,7 +1629,7 @@ def cal_params(superclass_feats):
     mixture_params = {}  # store (pi_j, mu_j, kappa_j) for each j in [1.. best_k]
     for sc_idx in range(20):
         feats_sc = np.array(superclass_feats[sc_idx])  # shape [N_sc, feat_dim]
-        best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=5)
+        best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=4)
         p_star.append(best_k)
         mixture_params[sc_idx] = best_params
 
@@ -1671,10 +1671,21 @@ def find_best_vmf_mixture_bic(feats_sc, k_max=5):
         # 4) BIC = -2 * logL + param_count * ln(N_sc)
         bic_value = -2.0 * logL + param_count * np.log(N_sc)
 
-        if bic_value < best_bic:
-            best_bic = bic_value
-            best_k = k
-            best_params = mixture_params_k
+        min_improvement = 10.0
+        if k > 1:
+            delta_bic = prev_bic - bic_value
+            if delta_bic < min_improvement:
+                # Not enough improvement to justify new cluster
+                best_k = k - 1
+                best_params = prev_params
+                break
+        prev_bic = bic_value
+        prev_params = mixture_params_k
+
+        # if bic_value < best_bic:
+        #     best_bic = bic_value
+        #     best_k = k
+        #     best_params = mixture_params_k
 
     return best_k, best_params
 
