@@ -1198,11 +1198,13 @@ def train_cifar(rank, world_size, config, console):
 
                 leaf_node_ids = list(range(100))
 
+                new_proco_loss = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
+                                           temperature=config.training_contrastive.temp,
+                                           num_classes=num_nodes,
+                                           device=device)
+
                 new_criterion_scl = HierarchicalProCoWrapper(
-                    proco_loss=ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
-                                         temperature=config.training_contrastive.temp,
-                                         num_classes=num_nodes,
-                                         device=device),
+                    proco_loss=new_proco_loss,
                     leaf_node_ids=leaf_node_ids,
                     leaf_path_map=leaf_path_map,
                     num_nodes=num_nodes).to(device)
@@ -1217,8 +1219,8 @@ def train_cifar(rank, world_size, config, console):
                         # ensure it's normalized
                         mu_j = mu_j / (np.linalg.norm(mu_j) + 1e-12)
                         # set them in the Estimator
-                        new_criterion_scl.estimator.Ave[node_id] = torch.from_numpy(mu_j).to(device)
-                        new_criterion_scl.estimator.kappa[node_id] = torch.tensor(kappa_j, device=device)
+                        new_proco_loss.estimator.Ave[node_id] = torch.from_numpy(mu_j).to(device)
+                        new_proco_loss.estimator.kappa[node_id] = torch.tensor(kappa_j, device=device)
                         # logC can be updated or left to be updated in next iteration (update_kappa).
 
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl, optimizer,
