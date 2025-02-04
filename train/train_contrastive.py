@@ -1118,15 +1118,15 @@ def train_cifar(rank, world_size, config, console):
         assert (offset - 1) < num_nodes, "All IDs must be in range"
 
         leaf_node_ids = list(range(100))
+        proco_loss = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
+                               temperature=config.training_contrastive.temp,
+                               num_classes=num_nodes,
+                               device=device),
 
-        criterion_scl = HierarchicalProCoWrapper(
-            proco_loss=ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
-                                 temperature=config.training_contrastive.temp,
-                                 num_classes=num_nodes,
-                                 device=device),
-            leaf_node_ids=leaf_node_ids,
-            leaf_path_map=leaf_path_map,
-            num_nodes=num_nodes).to(device)
+        criterion_scl = HierarchicalProCoWrapper(proco_loss,
+                                                 leaf_node_ids=leaf_node_ids,
+                                                 leaf_path_map=leaf_path_map,
+                                                 num_nodes=num_nodes).to(device)
 
 
     elif config.training_contrastive.loss == 'procoun':
@@ -1149,7 +1149,7 @@ def train_cifar(rank, world_size, config, console):
                                 weight_decay=config.training_contrastive.weight_decay)
 
     if config.training_contrastive.path_pretrain:
-        criterion_scl.reload_memory()
+        proco_loss.reload_memory()
 
     ce_loss_all_avg = []
     scl_loss_all_avg = []
