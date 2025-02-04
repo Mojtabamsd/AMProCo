@@ -1643,7 +1643,7 @@ def find_best_vmf_mixture_bic(feats_sc, k_max=5):
         best_k: the number of prototypes with the minimal BIC
         best_params: a list of (pi_j, mu_j, kappa_j) for j=1..best_k
     """
-    min_improvement = 10
+    min_improvement = 1000
     best_k = 1
     best_bic = float('inf')
     best_params = None
