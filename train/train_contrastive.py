@@ -1166,7 +1166,7 @@ def train_cifar(rank, world_size, config, console):
 
         adjust_lr(optimizer, epoch, config)
 
-        index = 0
+        index = 150
         if epoch < index:
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
                                                     config, console)
@@ -1643,15 +1643,11 @@ def find_best_vmf_mixture_bic(feats_sc, k_max=5):
         best_k: the number of prototypes with the minimal BIC
         best_params: a list of (pi_j, mu_j, kappa_j) for j=1..best_k
     """
-    min_improvement = 1000
     best_k = 1
     best_bic = float('inf')
     best_params = None
 
     N_sc, dim = feats_sc.shape
-
-    prev_bic = None
-    prev_params = None
 
     for k in range(1, k_max + 1):
         # 1) Fit a mixture-of-vMF with k components to feats_sc
@@ -1676,32 +1672,19 @@ def find_best_vmf_mixture_bic(feats_sc, k_max=5):
         # 4) BIC = -2 * logL + param_count * ln(N_sc)
         bic_value = -2.0 * logL + param_count * np.log(N_sc)
 
+        min_improvement = 10
         if k == 1:
             best_k = 1
             best_params = mixture_params_k
             best_bic = bic_value
-            prev_bic = bic_value
-            prev_params = mixture_params_k
         else:
-            delta_bic = prev_bic - bic_value
+            delta_bic = best_bic - bic_value
             print('in k = ' + str(k) + '   , the delta is:  ' + str(delta_bic))
 
-            if delta_bic < min_improvement:
-                best_k = k - 1
-                best_params = prev_params
-                best_bic = prev_bic
-                break
-            else:
+            if delta_bic > min_improvement:
+                best_bic = bic_value
                 best_k = k
                 best_params = mixture_params_k
-                best_bic = bic_value
-                prev_bic = bic_value
-                prev_params = mixture_params_k
-
-        # if bic_value < best_bic:
-        #     best_bic = bic_value
-        #     best_k = k
-        #     best_params = mixture_params_k
 
     return best_k, best_params
 
