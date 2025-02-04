@@ -1166,7 +1166,7 @@ def train_cifar(rank, world_size, config, console):
 
         adjust_lr(optimizer, epoch, config)
 
-        index = 150
+        index = 0
         if epoch < index:
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
                                                     config, console)
@@ -1684,6 +1684,7 @@ def find_best_vmf_mixture_bic(feats_sc, k_max=5):
             prev_params = mixture_params_k
         else:
             delta_bic = prev_bic - bic_value
+            print('in k = ' + str(k) + '   , the delta is:  ' + str(delta_bic))
 
             if delta_bic < min_improvement:
                 best_k = k - 1
