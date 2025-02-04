@@ -1121,7 +1121,7 @@ def train_cifar(rank, world_size, config, console):
         proco_loss = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
                                temperature=config.training_contrastive.temp,
                                num_classes=num_nodes,
-                               device=device),
+                               device=device)
 
         criterion_scl = HierarchicalProCoWrapper(proco_loss,
                                                  leaf_node_ids=leaf_node_ids,
@@ -1148,8 +1148,8 @@ def train_cifar(rank, world_size, config, console):
                                 momentum=config.training_contrastive.momentum,
                                 weight_decay=config.training_contrastive.weight_decay)
 
-    if config.training_contrastive.path_pretrain:
-        proco_loss.reload_memory()
+    # if config.training_contrastive.path_pretrain:
+    #     proco_loss.reload_memory()
 
     ce_loss_all_avg = []
     scl_loss_all_avg = []
