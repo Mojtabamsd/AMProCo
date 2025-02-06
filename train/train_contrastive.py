@@ -1148,8 +1148,8 @@ def train_cifar(rank, world_size, config, console):
                                 momentum=config.training_contrastive.momentum,
                                 weight_decay=config.training_contrastive.weight_decay)
 
-    # if config.training_contrastive.path_pretrain:
-    #     proco_loss.reload_memory()
+    if config.training_contrastive.path_pretrain:
+        proco_loss.reload_memory()
 
     ce_loss_all_avg = []
     scl_loss_all_avg = []
