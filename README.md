@@ -10,8 +10,8 @@ Real and Synthetic Data Integration for Classification
 ### Getting started
 - Clone this repo:
 ```bash
-git clone https://github.com/Mojtabamsd/PlanktonFusion PF
-cd PF
+git clone https://github.com/Mojtabamsd/AMProCo AMP
+cd AMP
 ```
 
 - Install [PyTorch](http://pytorch.org) and other dependencies (e.g., torchvision).
