@@ -2,6 +2,9 @@
 Adaptive Multi-Prototype Probabilistic Contrastive Learning for Long-Tailed Recognition
 
 
+![AMProCo](assets/superclass.png)
+
+
 ## Prerequisites
 - Linux or macOS or windows
 - Python 3
