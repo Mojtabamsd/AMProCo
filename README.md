@@ -1,5 +1,5 @@
-# PlanktonFusion
-Real and Synthetic Data Integration for Classification
+# AMProCo
+Adaptive Multi-Prototype Probabilistic Contrastive Learning for Long-Tailed Recognition
 
 
 ## Prerequisites
