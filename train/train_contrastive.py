@@ -109,7 +109,7 @@ def train_contrastive(config_path, input_path, output_path):
         else:
             train_uvp(config.base.gpu_index, world_size, config, console)
 
-    elif config.training_contrastive.dataset == 'cifar10' or config.training_contrastive.dataset == 'cifar100':
+    elif config.training_contrastive.dataset == 'cifar100':
         if world_size > 1:
             mp.spawn(train_cifar, args=(world_size, config, console), nprocs=world_size, join=True)
         else:
@@ -623,7 +623,8 @@ def train_cifar(rank, world_size, config, console):
         else:
             if epoch == config.training_contrastive.twostage_epoch:
                 superclass_feats = cal_feats(model, train_loader, leaf_to_superclass_dict, config)
-                p_star, mixture_params = cal_params(superclass_feats, config.training_contrastive.k_max,
+                p_star, mixture_params = cal_params(superclass_feats, config.training_contrastive.superclass_num,
+                                                    config.training_contrastive.k_max,
                                                     config.training_contrastive.delta_min)
 
                 console.info('super class names   :' + str(super_class_names))
