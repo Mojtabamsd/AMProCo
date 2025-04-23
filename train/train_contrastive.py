@@ -623,9 +623,11 @@ def train_cifar(rank, world_size, config, console):
         else:
             if epoch == config.training_contrastive.twostage_epoch:
                 superclass_feats = cal_feats(model, train_loader, leaf_to_superclass_dict, config)
-                p_star, mixture_params = cal_params(superclass_feats)
+                p_star, mixture_params = cal_params(superclass_feats, config.training_contrastive.k_max,
+                                                    config.training_contrastive.delta_min)
 
-                print(p_star)
+                console.info('super class names   :' + str(super_class_names))
+                console.info('P*   :' + str(p_star))
 
                 offset = config.sampling.num_class
                 superclass_to_protos = {}
@@ -661,7 +663,7 @@ def train_cifar(rank, world_size, config, console):
                     leaf_path_map=leaf_path_map,
                     num_nodes=num_nodes).to(device)
 
-                for sc_idx in range(20):
+                for sc_idx in range(config.training_contrastive.superclass_num):
                     p_i = p_star[sc_idx]
                     proto_list = superclass_to_protos[sc_idx]
                     for j in range(p_i):
@@ -677,6 +679,9 @@ def train_cifar(rank, world_size, config, console):
 
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl,
                                                     optimizer, config, console)
+
+            if epoch == config.training_contrastive.num_epoch - 1:
+                console.info('kappa values for superclasses   :' + str(new_proco_loss.estimator.kappa[100:-1]))
 
         ce_loss_all_avg.append(ce_loss_all.avg)
         scl_loss_all_avg.append(scl_loss_all.avg)
@@ -1077,26 +1082,26 @@ def cal_feats(model, train_loader, leaf_to_superclass_dict, config):
     return superclass_feats
 
 
-def cal_params(superclass_feats):
+def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     p_star = []
     mixture_params = {}  # store (pi_j, mu_j, kappa_j) for each j in [1.. best_k]
-    for sc_idx in range(20):
+    for sc_idx in range(superclass_num):
         feats_sc = np.array(superclass_feats[sc_idx])  # shape [N_sc, feat_dim]
-        best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=5)
+        best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=k_max, delta_min=delta_min)
         p_star.append(best_k)
         mixture_params[sc_idx] = best_params
 
     return p_star, mixture_params
 
 
-def find_best_vmf_mixture_bic(feats_sc, k_max=5):
+def find_best_vmf_mixture_bic(feats_sc, k_max=5, delta_min=100):
     """
     feats_sc: shape [N_sc, feat_dim]
     returns:
         best_k: the number of prototypes with the minimal BIC
         best_params: a list of (pi_j, mu_j, kappa_j) for j=1..best_k
     """
-    min_improvement = 100
+    min_improvement = delta_min
     best_k = 1
     best_bic = float('inf')
     best_params = None

@@ -30,13 +30,15 @@ class SamplingConfig:
 
 
 class TrainingContrastiveConfig:
-    def __init__(self, dataset, im_factor, superclass_num, architecture_type, batch_size, accumulation_steps,
-                 num_workers, gray, target_size, padding, pre_train, learning_rate, weight_decay, cos, momentum,
-                 schedule, num_epoch, warmup_epoch, twostage_epoch, loss, max_modes, feat_dim, temp, use_norm,
-                 path_pretrain):
+    def __init__(self, dataset, im_factor, superclass_num, k_max, delta_min, architecture_type, batch_size,
+                 accumulation_steps, num_workers, gray, target_size, padding, pre_train, learning_rate, weight_decay,
+                 cos, momentum, schedule, num_epoch, warmup_epoch, twostage_epoch, loss, feat_dim,
+                 temp, use_norm, path_pretrain):
         self.dataset = dataset
         self.im_factor = im_factor
         self.superclass_num = superclass_num
+        self.k_max = k_max
+        self.delta_min = delta_min
         self.architecture_type = architecture_type
         self.batch_size = batch_size
         self.accumulation_steps = accumulation_steps
@@ -54,7 +56,6 @@ class TrainingContrastiveConfig:
         self.warmup_epoch = warmup_epoch
         self.twostage_epoch = twostage_epoch
         self.loss = loss
-        self.max_modes = max_modes
         self.feat_dim = feat_dim
         self.temp = temp
         self.use_norm = use_norm
