@@ -5,13 +5,9 @@ from pathlib import Path
 from torchvision import transforms, datasets
 from torch.utils.data import Dataset, DataLoader, DistributedSampler
 from dataset.uvp_dataset import UvpDataset
-from models.classifier_cnn import count_parameters
 from models import resnext
 from models import resnet_cifar
-from dataset.imagenet import ImageNetLT
-from dataset.inat import INaturalist
-from dataset.fashionmnist import FashionMNISTDataset
-from dataset.cifar import IMBALANCECIFAR10, IMBALANCECIFAR100
+from dataset.cifar import IMBALANCECIFAR100
 from tools.autoaug import CIFAR10Policy, Cutout
 import math
 import os
@@ -239,10 +235,6 @@ def train_uvp(rank, world_size, config, console):
                           use_norm=config.training_contrastive.use_norm,
                           gray=config.training_contrastive.gray)
 
-    # Calculate the number of parameters in millions
-    num_params = count_parameters(model) / 1_000_000
-    console.info(f"The model has approximately {num_params:.2f} million parameters.")
-
     model.to(device)
     # test memory usage
     # console.info(memory_usage(config, model, device))
@@ -278,20 +270,6 @@ def train_uvp(rank, world_size, config, console):
                                   temperature=config.training_contrastive.temp,
                                   num_classes=config.sampling.num_class,
                                   device=device)
-    elif config.training_contrastive.loss == 'procoun':
-        criterion_ce = LogitAdjust(class_counts, device=device)
-        criterion_scl = ProCoUNLoss(contrast_dim=config.training_contrastive.feat_dim,
-                                    class_frequencies=torch.FloatTensor(class_counts),
-                                    temperature=config.training_contrastive.temp,
-                                    num_classes=config.sampling.num_class,
-                                    device=device)
-    elif config.training_contrastive.loss == 'procos':
-        criterion_ce = LogitAdjust(class_counts, device=device)
-        criterion_scl = ProCoSLoss(contrast_dim=config.training_contrastive.feat_dim,
-                                   class_frequencies=torch.FloatTensor(class_counts),
-                                   temperature=config.training_contrastive.temp,
-                                   num_classes=config.sampling.num_class,
-                                   device=device)
 
     optimizer = torch.optim.SGD(model.parameters(), config.training_contrastive.learning_rate,
                                 momentum=config.training_contrastive.momentum,
@@ -443,30 +421,24 @@ def train_cifar(rank, world_size, config, console):
     console.info(f"Running on:  {device}")
 
     config.device = device
-
-    # number of classes for imagenet or inat
-    if config.training_contrastive.dataset == 'cifar10':
-        config.sampling.num_class = 10
-
-    elif config.training_contrastive.dataset == 'cifar100':
-        config.sampling.num_class = 100
+    config.sampling.num_class = 100
 
     if config.training_contrastive.num_epoch == 200:
         config.training_contrastive.schedule = [160, 180]
-        config.training_contrastive.warmup_epochs = 5
+        config.training_contrastive.warmup_epoch = 5
     elif config.training_contrastive.num_epoch == 400:
         config.training_contrastive.schedule = [360, 380]
-        config.training_contrastive.warmup_epochs = 10
+        config.training_contrastive.warmup_epoch = 10
     else:
         config.training_contrastive.schedule = [config.training_contrastive.num_epoch * 0.8,
                                                 config.training_contrastive.num_epoch * 0.9]
-        config.training_contrastive.warmup_epochs = 5 * config.training_contrastive.num_epoch // 200
+        config.training_contrastive.warmup_epoch = 5 * config.training_contrastive.num_epoch // 200
 
     # Define data transformations
     augmentation_regular = [
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
-        CIFAR10Policy(),    # add AutoAug
+        CIFAR10Policy(),
         transforms.ToTensor(),
         Cutout(n_holes=1, length=16),
         transforms.Normalize(
@@ -491,20 +463,7 @@ def train_cifar(rank, world_size, config, console):
             transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
         ])
 
-    if config.training_contrastive.dataset == 'cifar10':
-        train_dataset = IMBALANCECIFAR10(root=config.input_folder_train, imb_type='exp',
-                                         imb_factor=config.training_contrastive.im_factor,
-                                         rand_number=0,
-                                         train=True,
-                                         download=True,
-                                         transform=transform_train)
-        val_dataset = datasets.CIFAR10(
-                root=config.input_folder_train,
-                train=False,
-                download=True,
-                transform=transform_val)
-
-    elif config.training_contrastive.dataset == 'cifar100':
+    if config.training_contrastive.dataset == 'cifar100':
         train_dataset = IMBALANCECIFAR100(root=config.input_folder_train, imb_type='exp',
                                           imb_factor=config.training_contrastive.im_factor,
                                           rand_number=0,
@@ -548,10 +507,6 @@ def train_cifar(rank, world_size, config, console):
     else:
         raise NotImplementedError("only select resnet32 architecture for cifar datasets!")
 
-    # Calculate the number of parameters in millions
-    num_params = count_parameters(model) / 1_000_000
-    console.info(f"The model has approximately {num_params:.2f} million parameters.")
-
     model.to(device)
 
     # test memory usage
@@ -584,27 +539,16 @@ def train_cifar(rank, world_size, config, console):
     # Loss criterion and optimizer
     cls_num_list = train_dataset.get_cls_num_list()
     class_frequencies = torch.tensor(cls_num_list, dtype=torch.float32)
-    class_frequencies = class_frequencies.to(device)
+    class_frequencies = class_frequencies.to(config.device)
 
     config.cls_num = len(cls_num_list)
 
-    train_class2idx = train_dataset.class_to_idx
-    CIFAR100_SUPERCLASSES_ID = []
-    for superclass_name, leaf_names in CIFAR100_SUPERCLASSES:
-        leaf_ids = [train_class2idx[leaf_name] for leaf_name in leaf_names]
-        CIFAR100_SUPERCLASSES_ID.append((superclass_name, leaf_ids))
-
-    leaf_to_superclass_dict = {}
-    super_class_names = []
-    for sup_id, (sup_name, leaf_ids) in enumerate(CIFAR100_SUPERCLASSES_ID):
-        super_class_names.append(sup_name)
-        for leaf_id in leaf_ids:
-            leaf_to_superclass_dict[leaf_id] = sup_id
-
-    leaf_class_names = [name for name, idx in train_dataset.class_to_idx.items()]
+    leaf_class_names, super_classes_id, \
+    leaf_to_superclass_dict, super_class_names = leaf_class(train_dataset, config)
 
     prototypes_per_superclass = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                                  1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    prototypes_per_superclass2 = [1] * 20
 
     assert len(prototypes_per_superclass) == 20, "We have 20 superclasses"
 
@@ -618,11 +562,9 @@ def train_cifar(rank, world_size, config, console):
     elif config.training_contrastive.loss == 'amproco':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
 
-        # SUPERCLASS_PROTOTYPES = 3
-
         offset = 100
         super_to_protos = {}  # maps superclass_index -> list of prototype IDs
-        for i, (sname, leaf_list) in enumerate(CIFAR100_SUPERCLASSES_ID):
+        for i, (sname, leaf_list) in enumerate(super_classes_id):
             p_i = prototypes_per_superclass[i]
             proto_ids = []
             for _ in range(p_i):
@@ -634,7 +576,7 @@ def train_cifar(rank, world_size, config, console):
         offset += 1  # reserve 1 ID for root
 
         leaf_path_map = {}
-        for i, (sname, leaf_list) in enumerate(CIFAR100_SUPERCLASSES_ID):
+        for i, (sname, leaf_list) in enumerate(super_classes_id):
             proto_ids = super_to_protos[i]
             for leaf in leaf_list:
                 # path = [all prototypes of this superclass, plus leaf, plus root]
@@ -668,7 +610,6 @@ def train_cifar(rank, world_size, config, console):
 
     ce_loss_all_avg = []
     scl_loss_all_avg = []
-    tu_loss_all_avg = []
     top1_avg = []
     top1_val_avg = []
     best_acc1 = 0.0
@@ -681,12 +622,11 @@ def train_cifar(rank, world_size, config, console):
 
         adjust_lr(optimizer, epoch, config)
 
-        index = 150
-        if epoch < index:
+        if epoch < config.training_contrastive.twostage_epoch:
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
                                                     config, console)
         else:
-            if epoch == index:
+            if epoch == config.training_contrastive.twostage_epoch:
                 superclass_feats = cal_feats(model, train_loader, leaf_to_superclass_dict, config)
                 p_star, mixture_params = cal_params(superclass_feats)
 
@@ -694,7 +634,7 @@ def train_cifar(rank, world_size, config, console):
 
                 offset = 100
                 superclass_to_protos = {}
-                for i, (sname, leaf_list) in enumerate(CIFAR100_SUPERCLASSES_ID):
+                for i, (sname, leaf_list) in enumerate(super_classes_id):
                     p_i = p_star[i]
                     proto_list = []
                     for comp in range(p_i):
@@ -707,7 +647,7 @@ def train_cifar(rank, world_size, config, console):
                 num_nodes = 100 + sum(p_star) + 1
 
                 leaf_path_map = {}
-                for i, (sname, leaf_list) in enumerate(CIFAR100_SUPERCLASSES_ID):
+                for i, (sname, leaf_list) in enumerate(super_classes_id):
                     proto_ids = superclass_to_protos[i]
                     for leaf_id in leaf_list:
                         # path => [root_node_id] + proto_ids + [leaf_id]
@@ -1046,6 +986,26 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
         return acc1, many, med, few, total_labels, all_preds, all_features
 
 
+def leaf_class(train_dataset):
+
+    train_class2idx = train_dataset.class_to_idx
+    super_classes_id = []
+    for superclass_name, leaf_names in CIFAR100_SUPERCLASSES:
+        leaf_ids = [train_class2idx[leaf_name] for leaf_name in leaf_names]
+        super_classes_id.append((superclass_name, leaf_ids))
+
+    leaf_to_superclass_dict = {}
+    super_class_names = []
+    for sup_id, (sup_name, leaf_ids) in enumerate(super_classes_id):
+        super_class_names.append(sup_name)
+        for leaf_id in leaf_ids:
+            leaf_to_superclass_dict[leaf_id] = sup_id
+
+    leaf_class_names = [name for name, idx in train_dataset.class_to_idx.items()]
+
+    return leaf_class_names, super_classes_id, leaf_to_superclass_dict, super_class_names
+
+
 class AverageMeter(object):
     """Computes and stores the average and current value"""
 
@@ -1074,11 +1034,11 @@ class AverageMeter(object):
 def adjust_lr(optimizer, epoch, config):
     """Decay the learning rate based on schedule"""
     lr = config.training_contrastive.learning_rate
-    if epoch < config.training_contrastive.warmup_epochs:
-        lr = lr / config.training_contrastive.warmup_epochs * (epoch + 1)
+    if epoch < config.training_contrastive.warmup_epoch:
+        lr = lr / config.training_contrastive.warmup_epoch * (epoch + 1)
     elif config.training_contrastive.cos:  # cosine lr schedule
-        lr *= 0.5 * (1. + math.cos(math.pi * (epoch - config.training_contrastive.warmup_epochs + 1) /
-                                   (config.training_contrastive.num_epoch - config.training_contrastive.warmup_epochs + 1)))
+        lr *= 0.5 * (1. + math.cos(math.pi * (epoch - config.training_contrastive.warmup_epoch + 1) /
+                                   (config.training_contrastive.num_epoch - config.training_contrastive.warmup_epoch + 1)))
     else:  # stepwise lr schedule
         for milestone in config.training_contrastive.schedule:
             lr *= 0.1 if epoch >= milestone else 1.

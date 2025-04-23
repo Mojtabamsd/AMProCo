@@ -1,6 +1,6 @@
 base:
   cpu: False
-  all_gpu: True
+  all_gpu: False
   gpu_index: 0
 
 
@@ -21,33 +21,52 @@ sampling:
   create_folder: False  # if True it will create sub-folders with class naming
 
 
-training_contrastive:
-  dataset: 'imagenet' # choose uvp or imagenet or inat
-  im_factor: 0.1 # only for cifar dataset
-  architecture_type: 'resnet50' # choose 'resnet18', 'resnet34', 'resnet50' or 'resnext50'
-  batch_size: 256
-  accumulation_steps: 4  #for mini batch size --- the training performs like batch_size // accumulation_steps i.e. 256=64*4
-  num_workers: 15
-  gray: False
+training:
+  architecture_type: 'resnet18' # choose 'resnet18', 'resnet34', 'resnet50' or 'resnext50'
+  batch_size: 128
+  num_workers: 10
+  gray: True
   target_size: [128, 128]  #image target size
+  aug_mode: 1 # 1 normal, 2 massive
+  padding: True # pad image to preserve aspect ratio
+  pre_train: False # True or False
+  learning_rate: 0.001
+  num_epoch: 2
+  save_model_every_n_epoch: 50
+  loss: 'cross_entropy_weight' # choose 'cross_entropy' or 'cross_entropy_weight' or 'focal' or 'LACE'
+#  path_pretrain: 'D:\mojmas\files\data\result_sampling\training20231123092750' # if False training from scratch
+  path_pretrain: False # if False training from scratch
+
+
+training_contrastive:
+  dataset: 'cifar100' # choose uvp or cifar100
+  im_factor: 0.01 # only for cifar dataset, choose 0.01, 0.02 or 0.1
+  superclass_num: 20
+  architecture_type: 'resnet32' # choose 'resnet18', 'resnet34', 'resnet50' or 'resnext50'
+  batch_size: 5
+  accumulation_steps: 1  #for mini batch size --- the training performs like batch_size // accumulation_steps i.e. 256=64*4
+  num_workers: 10
+  gray: True
+  target_size: [32, 32]  #image target size
   padding: True # pad image to preserve aspect ratio
   pre_train: None # True or None
-  learning_rate: 0.1
+  learning_rate: 0.3
   momentum: 0.9 # momentum of SGD solver (default: 0.9)
-  weight_decay: 0.0002 #weight decay (default: 2e-4)
+  weight_decay: 0.0004 #weight decay (default: 2e-4)
   cos: True #lr decays by cosine scheduler
-  schedule: [160, 180] # learning rate schedule (when to drop lr by 10x)')
-  num_epoch: 90
-  warmup_epochs: 0 # warmup epochs
+  schedule: [10, 20, 30, 40, 50] # learning rate schedule (when to drop lr by 10x)')
+  num_epoch: 5
+  warmup_epoch: 1 # warmup epochs
+  twostage_epoch: 150 # two-stage training epoch for running adaptive multi-prototype stage
   loss: 'amproco' # choose 'proco' or 'amproco'
   max_modes: 5
-  feat_dim: 1024 # feature dimension of mlp head
-  temp: 0.07  # scalar temperature for contrastive learning
-  use_norm: true # cosine classifier.
-#  path_pretrain: 'D:\mojmas\files\data\result_sampling\training_contrastive20240813152329' # if False training from scratch
+  feat_dim: 128 # feature dimension of mlp head
+  temp: 0.1  # scalar temperature for contrastive learning
+  use_norm: True # cosine classifier.
+#  path_pretrain: 'D:\mojmas\files\data\result_sampling\cifar-best' # if False training from scratch
   path_pretrain: False # if False training from scratch
 
 
 prediction:
-  path_model: 'D:\mojmas\files\data\result_sampling\training20231123092750'
+  path_model: 'D:\mojmas\files\data\results\uvp_training_contrastive20250113104841'
   batch_size: 2

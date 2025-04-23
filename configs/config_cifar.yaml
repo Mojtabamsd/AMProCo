@@ -39,8 +39,9 @@ training:
 
 
 training_contrastive:
-  dataset: 'cifar100' # choose uvp or imagenet or inat
+  dataset: 'cifar100' # choose uvp or cifar100
   im_factor: 0.01 # only for cifar dataset, choose 0.01, 0.02 or 0.1
+  superclass_num: 20
   architecture_type: 'resnet32' # choose 'resnet18', 'resnet34', 'resnet50' or 'resnext50'
   batch_size: 5
   accumulation_steps: 1  #for mini batch size --- the training performs like batch_size // accumulation_steps i.e. 256=64*4
@@ -55,7 +56,8 @@ training_contrastive:
   cos: True #lr decays by cosine scheduler
   schedule: [10, 20, 30, 40, 50] # learning rate schedule (when to drop lr by 10x)')
   num_epoch: 5
-  warmup_epochs: 1 # warmup epochs
+  warmup_epoch: 1 # warmup epochs
+  twostage_epoch: 150 # two-stage training epoch for running adaptive multi-prototype stage
   loss: 'amproco' # choose 'proco' or 'amproco'
   max_modes: 5
   feat_dim: 128 # feature dimension of mlp head
