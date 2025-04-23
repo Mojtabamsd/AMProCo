@@ -544,12 +544,9 @@ def train_cifar(rank, world_size, config, console):
     config.cls_num = len(cls_num_list)
 
     leaf_class_names, super_classes_id, \
-    leaf_to_superclass_dict, super_class_names = leaf_class(train_dataset, config)
+    leaf_to_superclass_dict, super_class_names = leaf_class(train_dataset)
 
-    prototypes_per_superclass = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-                                 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-    prototypes_per_superclass2 = [1] * 20
-
+    prototypes_per_superclass = [1] * config.training_contrastive.superclass_num
     assert len(prototypes_per_superclass) == 20, "We have 20 superclasses"
 
     if config.training_contrastive.loss == 'proco':
@@ -562,7 +559,7 @@ def train_cifar(rank, world_size, config, console):
     elif config.training_contrastive.loss == 'amproco':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
 
-        offset = 100
+        offset = config.sampling.num_class
         super_to_protos = {}  # maps superclass_index -> list of prototype IDs
         for i, (sname, leaf_list) in enumerate(super_classes_id):
             p_i = prototypes_per_superclass[i]
@@ -570,27 +567,25 @@ def train_cifar(rank, world_size, config, console):
             for _ in range(p_i):
                 proto_ids.append(offset)
                 offset += 1
-            super_to_protos[i] = proto_ids  # e.g. [100, 101] for i=0 if p_i=2
+            super_to_protos[i] = proto_ids
 
         root_node_id = offset
-        offset += 1  # reserve 1 ID for root
+        offset += 1
 
         leaf_path_map = {}
         for i, (sname, leaf_list) in enumerate(super_classes_id):
             proto_ids = super_to_protos[i]
             for leaf in leaf_list:
-                # path = [all prototypes of this superclass, plus leaf, plus root]
-                # the order is up to you. One typical approach is [root, prototypes..., leaf].
                 path = [root_node_id] + proto_ids + [leaf]
                 leaf_path_map[leaf] = path
 
-        num_leaves = 100
-        sum_protos = sum(prototypes_per_superclass)  # e.g. 2+3+1+2+... etc.
-        num_nodes = num_leaves + sum_protos + 1  # must be > max ID assigned
+        num_leaves = config.sampling.num_class
+        sum_protos = sum(prototypes_per_superclass)
+        num_nodes = num_leaves + sum_protos + 1
 
         assert (offset - 1) < num_nodes, "All IDs must be in range"
 
-        leaf_node_ids = list(range(100))
+        leaf_node_ids = list(range(config.sampling.num_class))
         proco_loss = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
                                temperature=config.training_contrastive.temp,
                                num_classes=num_nodes,
@@ -632,7 +627,7 @@ def train_cifar(rank, world_size, config, console):
 
                 print(p_star)
 
-                offset = 100
+                offset = config.sampling.num_class
                 superclass_to_protos = {}
                 for i, (sname, leaf_list) in enumerate(super_classes_id):
                     p_i = p_star[i]
@@ -644,7 +639,7 @@ def train_cifar(rank, world_size, config, console):
 
                 root_node_id = offset
                 offset += 1
-                num_nodes = 100 + sum(p_star) + 1
+                num_nodes = config.sampling.num_class + sum(p_star) + 1
 
                 leaf_path_map = {}
                 for i, (sname, leaf_list) in enumerate(super_classes_id):
@@ -653,7 +648,7 @@ def train_cifar(rank, world_size, config, console):
                         # path => [root_node_id] + proto_ids + [leaf_id]
                         leaf_path_map[leaf_id] = [root_node_id] + proto_ids + [leaf_id]
 
-                leaf_node_ids = list(range(100))
+                leaf_node_ids = list(range(config.sampling.num_class))
 
                 new_proco_loss = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
                                            temperature=config.training_contrastive.temp,
@@ -680,8 +675,8 @@ def train_cifar(rank, world_size, config, console):
                         new_proco_loss.estimator.kappa[node_id] = torch.tensor(kappa_j, device=device)
                         # logC can be updated or left to be updated in next iteration (update_kappa).
 
-            ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl, optimizer,
-                                                        config, console)
+            ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl,
+                                                    optimizer, config, console)
 
         ce_loss_all_avg.append(ce_loss_all.avg)
         scl_loss_all_avg.append(scl_loss_all.avg)
