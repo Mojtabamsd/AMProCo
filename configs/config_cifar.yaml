@@ -46,7 +46,7 @@ training_contrastive:
   feat_dim: 128 # feature dimension of mlp head
   temp: 0.1  # scalar temperature for contrastive learning
   use_norm: True # cosine classifier.
-  path_pretrain: '/noc/users/mojmas/files/data/cifar100_training_contrastive20250204163343-1499' # if False training from scratch
+  path_pretrain: '/noc/users/mojmas/files/data/cifar100_training_contrastive20250204163343-149' # if False training from scratch
 #  path_pretrain: False # if False training from scratch
 
 
