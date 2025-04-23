@@ -5,8 +5,6 @@ from pathlib import Path
 from torchvision import transforms
 from torch.utils.data import Dataset, DataLoader
 from dataset.uvp_dataset import UvpDataset
-from models.classifier_cnn import SimpleCNN, ResNetCustom, MobileNetCustom, ShuffleNetCustom, count_parameters
-from models.classifier_vit import ViT, ViTPretrained
 import torch
 import pandas as pd
 from tools.utils import report_to_df, memory_usage
