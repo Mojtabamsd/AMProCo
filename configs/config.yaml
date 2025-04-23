@@ -21,23 +21,6 @@ sampling:
   create_folder: False  # if True it will create sub-folders with class naming
 
 
-training:
-  architecture_type: 'resnet18' # choose 'resnet18', 'resnet34', 'resnet50' or 'resnext50'
-  batch_size: 128
-  num_workers: 10
-  gray: True
-  target_size: [128, 128]  #image target size
-  aug_mode: 1 # 1 normal, 2 massive
-  padding: True # pad image to preserve aspect ratio
-  pre_train: False # True or False
-  learning_rate: 0.001
-  num_epoch: 2
-  save_model_every_n_epoch: 50
-  loss: 'cross_entropy_weight' # choose 'cross_entropy' or 'cross_entropy_weight' or 'focal' or 'LACE'
-#  path_pretrain: 'D:\mojmas\files\data\result_sampling\training20231123092750' # if False training from scratch
-  path_pretrain: False # if False training from scratch
-
-
 training_contrastive:
   dataset: 'cifar100' # choose uvp or cifar100
   im_factor: 0.01 # only for cifar dataset, choose 0.01, 0.02 or 0.1
