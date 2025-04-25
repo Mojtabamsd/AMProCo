@@ -290,8 +290,8 @@ def train_uvp(rank, world_size, config, console):
 
         adjust_lr(optimizer, epoch, config)
 
-        ce_loss_all, scl_loss_all, top1, tu_loss_all = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
-                                                config, console)
+        ce_loss_all, scl_loss_all, top1, tu_loss_all = train(epoch, train_loader, model, criterion_ce, criterion_scl,
+                                                             optimizer,config, console)
 
         ce_loss_all_avg.append(ce_loss_all.avg)
         scl_loss_all_avg.append(scl_loss_all.avg)
@@ -600,8 +600,8 @@ def train_cifar(rank, world_size, config, console):
                                 momentum=config.training_contrastive.momentum,
                                 weight_decay=config.training_contrastive.weight_decay)
 
-    if config.training_contrastive.path_pretrain:
-        proco_loss.reload_memory()
+    # if config.training_contrastive.path_pretrain:
+    #     proco_loss.reload_memory()
 
     ce_loss_all_avg = []
     scl_loss_all_avg = []
