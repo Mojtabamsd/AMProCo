@@ -20,14 +20,15 @@ sampling:
   test_percent_uvp6: 0.1
   create_folder: False  # if True it will create sub-folders with class naming
 
+
 training_contrastive:
-  dataset: 'cifar100' # choose uvp or cifar100
+  dataset: 'uvp' # choose uvp or cifar100
   im_factor: 0.01 # only for cifar dataset, choose 0.01, 0.02 or 0.1
   superclass_num: 20
   k_max: 5
   delta_min: 100
-  architecture_type: 'resnet32' # choose 'resnet32'
-  batch_size: 256
+  architecture_type: 'resnet18' # choose 'resnet18', 'resnet34', 'resnet50' or 'resnext50'
+  batch_size: 5
   accumulation_steps: 1  #for mini batch size --- the training performs like batch_size // accumulation_steps i.e. 256=64*4
   num_workers: 10
   gray: True
@@ -39,15 +40,15 @@ training_contrastive:
   weight_decay: 0.0004 #weight decay (default: 2e-4)
   cos: True #lr decays by cosine scheduler
   schedule: [10, 20, 30, 40, 50] # learning rate schedule (when to drop lr by 10x)')
-  num_epoch: 200
-  warmup_epoch: 5 # warmup epochs
-  twostage_epoch: 150 # two-stage training epoch for running adaptive multi-prototype stage
+  num_epoch: 5
+  warmup_epoch: 1 # warmup epochs
+  twostage_epoch: 1 # two-stage training epoch for running adaptive multi-prototype stage
   loss: 'amproco' # choose 'proco' or 'amproco'
   feat_dim: 128 # feature dimension of mlp head
   temp: 0.1  # scalar temperature for contrastive learning
   use_norm: True # cosine classifier.
-  path_pretrain: '/noc/users/mojmas/files/data/cifar100_training_contrastive20250204163343-149' # if False training from scratch
-#  path_pretrain: False # if False training from scratch
+#  path_pretrain: 'D:\mojmas\files\data\result_sampling\cifar-best' # if False training from scratch
+  path_pretrain: False # if False training from scratch
 
 
 prediction:
