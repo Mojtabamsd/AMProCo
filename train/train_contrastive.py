@@ -268,6 +268,18 @@ def train_uvp(rank, world_size, config, console):
         latest_epoch = 0
 
     # Loss criterion and optimizer
+    cls_num_list = train_dataset.get_cls_num_list()
+    class_frequencies = torch.tensor(cls_num_list, dtype=torch.float32)
+    class_frequencies = class_frequencies.to(config.device)
+
+    config.cls_num = len(cls_num_list)
+
+    leaf_class_names, super_classes_id, \
+    leaf_to_superclass_dict, super_class_names = leaf_class(train_dataset)
+
+    prototypes_per_superclass = [1] * config.training_contrastive.superclass_num
+    assert len(prototypes_per_superclass) == 20, "We have 20 superclasses"
+
     if config.training_contrastive.loss == 'proco':
         criterion_ce = LogitAdjust(class_counts, device=device)
         criterion_scl = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
@@ -275,13 +287,55 @@ def train_uvp(rank, world_size, config, console):
                                   num_classes=config.sampling.num_class,
                                   device=device)
 
+    elif config.training_contrastive.loss == 'amproco':
+        criterion_ce = LogitAdjust(cls_num_list, device=device)
+
+        offset = config.sampling.num_class
+        super_to_protos = {}  # maps superclass_index -> list of prototype IDs
+        for i, (sname, leaf_list) in enumerate(super_classes_id):
+            p_i = prototypes_per_superclass[i]
+            proto_ids = []
+            for _ in range(p_i):
+                proto_ids.append(offset)
+                offset += 1
+            super_to_protos[i] = proto_ids
+
+        root_node_id = offset
+        offset += 1
+
+        leaf_path_map = {}
+        for i, (sname, leaf_list) in enumerate(super_classes_id):
+            proto_ids = super_to_protos[i]
+            for leaf in leaf_list:
+                path = [root_node_id] + proto_ids + [leaf]
+                leaf_path_map[leaf] = path
+
+        num_leaves = config.sampling.num_class
+        sum_protos = sum(prototypes_per_superclass)
+        num_nodes = num_leaves + sum_protos + 1
+
+        assert (offset - 1) < num_nodes, "All IDs must be in range"
+
+        leaf_node_ids = list(range(config.sampling.num_class))
+        proco_loss = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
+                               temperature=config.training_contrastive.temp,
+                               num_classes=num_nodes,
+                               device=device)
+
+        criterion_scl = HierarchicalProCoWrapper(proco_loss,
+                                                 leaf_node_ids=leaf_node_ids,
+                                                 leaf_path_map=leaf_path_map,
+                                                 num_nodes=num_nodes).to(device)
+
     optimizer = torch.optim.SGD(model.parameters(), config.training_contrastive.learning_rate,
                                 momentum=config.training_contrastive.momentum,
                                 weight_decay=config.training_contrastive.weight_decay)
 
+    # if config.training_contrastive.path_pretrain:
+    #     proco_loss.reload_memory()
+
     ce_loss_all_avg = []
     scl_loss_all_avg = []
-    tu_loss_all_avg = []
     top1_avg = []
     top1_val_avg = []
     best_acc1 = 0.0
