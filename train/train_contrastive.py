@@ -18,7 +18,9 @@ from tools.utils import report_to_df, plot_loss, shot_acc
 from tools.randaugment import rand_augment_transform
 from sklearn.metrics import classification_report, confusion_matrix
 import pandas as pd
-from tools.augmentation import ResizeAndPad
+from torchvision.transforms import RandomHorizontalFlip, RandomRotation, RandomAffine, RandomResizedCrop, \
+    ColorJitter, RandomGrayscale, RandomPerspective, RandomVerticalFlip
+from tools.augmentation import GaussianNoise, ResizeAndPad
 from models.loss import LogitAdjust
 from models.proco import ProCoLoss
 from models.amproco import HierarchicalProCoWrapper
@@ -147,15 +149,6 @@ def train_uvp(rank, world_size, config, console):
     config.device = device
 
     # Define data transformations
-    randaug_m = 10
-    randaug_n = 2
-    # ra_params = dict(translate_const=int(224 * 0.45), img_mean=tuple([min(255, round(255 * x)) for x in rgb_mean]), )
-    grayscale_mean = 128
-    ra_params = dict(
-        translate_const=int(config.training_contrastive.target_size[0] * 0.45),
-        img_mean=grayscale_mean
-    )
-
     if config.training_contrastive.padding:
         resize_operation = ResizeAndPad((config.training_contrastive.target_size[0],
                                          config.training_contrastive.target_size[1]))
@@ -165,20 +158,31 @@ def train_uvp(rank, world_size, config, console):
 
     transform_base = [
         resize_operation,
-        transforms.RandomResizedCrop(config.training_contrastive.target_size[0]),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomGrayscale(p=0.2),
-        rand_augment_transform('rand-n{}-m{}-mstd0.5'.format(randaug_n, randaug_m), ra_params, use_cmc=True),
+        # RandomHorizontalFlip(),
+        RandomRotation(degrees=30),
+        # RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.8, 1.2), shear=15),
+        RandomAffine(degrees=15, translate=(0.1, 0.1)),
+        GaussianNoise(std=0.1),
+        # RandomResizedCrop((config.training.target_size[0], config.training.target_size[1])),
+        # ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
+        # RandomGrayscale(p=0.1),
+        # RandomPerspective(distortion_scale=0.2, p=0.5),
+        # RandomVerticalFlip(p=0.1),
         transforms.ToTensor(),
     ]
+
     transform_sim = [
         resize_operation,
-        transforms.RandomResizedCrop(config.training_contrastive.target_size[0]),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomApply([
-            transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
-        ], p=0.8),
-        transforms.RandomGrayscale(p=0.2),
+        # RandomHorizontalFlip(),
+        RandomRotation(degrees=30),
+        # RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.8, 1.2), shear=15),
+        RandomAffine(degrees=15, translate=(0.1, 0.1)),
+        GaussianNoise(std=0.1),
+        # RandomResizedCrop((config.training.target_size[0], config.training.target_size[1])),
+        # ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
+        # RandomGrayscale(p=0.1),
+        # RandomPerspective(distortion_scale=0.2, p=0.5),
+        # RandomVerticalFlip(p=0.1),
         transforms.ToTensor(),
     ]
 
