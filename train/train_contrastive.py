@@ -66,9 +66,11 @@ def train_contrastive(config_path, input_path, output_path):
     if config.training_contrastive.dataset == 'uvp':
         if not input_csv_train.is_file():
             console.info("Label not provided for training")
+            print(input_csv_train)
 
         if not input_csv_test.is_file():
             console.info("Label not provided for testing")
+            print(input_csv_test)
 
     if config.training_contrastive.path_pretrain:
         training_path = Path(config.training_contrastive.path_pretrain)
