@@ -345,27 +345,89 @@ def train_uvp(rank, world_size, config, console):
 
         adjust_lr(optimizer, epoch, config)
 
-        ce_loss_all, scl_loss_all, top1, tu_loss_all = train(epoch, train_loader, model, criterion_ce, criterion_scl,
-                                                             optimizer,config, console)
+        if epoch < config.training_contrastive.twostage_epoch:
+            ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
+                                                    config, console)
+        else:
+            if epoch == config.training_contrastive.twostage_epoch:
+                superclass_feats = cal_feats(model, train_loader, leaf_to_superclass_dict, config)
+                p_star, mixture_params = cal_params(superclass_feats, config.training_contrastive.superclass_num,
+                                                    config.training_contrastive.k_max,
+                                                    config.training_contrastive.delta_min)
+
+                console.info('super class names   :' + str(super_class_names))
+                console.info('P*   :' + str(p_star))
+
+                offset = config.sampling.num_class
+                superclass_to_protos = {}
+                for i, (sname, leaf_list) in enumerate(super_classes_id):
+                    p_i = p_star[i]
+                    proto_list = []
+                    for comp in range(p_i):
+                        proto_list.append(offset)
+                        offset += 1
+                    superclass_to_protos[i] = proto_list
+
+                root_node_id = offset
+                offset += 1
+                num_nodes = config.sampling.num_class + sum(p_star) + 1
+
+                leaf_path_map = {}
+                for i, (sname, leaf_list) in enumerate(super_classes_id):
+                    proto_ids = superclass_to_protos[i]
+                    for leaf_id in leaf_list:
+                        # path => [root_node_id] + proto_ids + [leaf_id]
+                        leaf_path_map[leaf_id] = [root_node_id] + proto_ids + [leaf_id]
+
+                leaf_node_ids = list(range(config.sampling.num_class))
+
+                new_proco_loss = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
+                                           temperature=config.training_contrastive.temp,
+                                           num_classes=num_nodes,
+                                           device=device)
+
+                new_criterion_scl = HierarchicalProCoWrapper(
+                    proco_loss=new_proco_loss,
+                    leaf_node_ids=leaf_node_ids,
+                    leaf_path_map=leaf_path_map,
+                    num_nodes=num_nodes).to(device)
+
+                for sc_idx in range(config.training_contrastive.superclass_num):
+                    p_i = p_star[sc_idx]
+                    proto_list = superclass_to_protos[sc_idx]
+                    for j in range(p_i):
+                        node_id = proto_list[j]
+                        (pi_j, mu_j, kappa_j) = mixture_params[sc_idx][j]
+                        # mu_j is a numpy array of shape [feature_dim]
+                        # ensure it's normalized
+                        mu_j = mu_j / (np.linalg.norm(mu_j) + 1e-12)
+                        # set them in the Estimator
+                        new_proco_loss.estimator.Ave[node_id] = torch.from_numpy(mu_j).to(device)
+                        new_proco_loss.estimator.kappa[node_id] = torch.tensor(kappa_j, device=device)
+                        # logC can be updated or left to be updated in next iteration (update_kappa).
+
+            ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl,
+                                                    optimizer, config, console)
+
+            if epoch == config.training_contrastive.num_epoch - 1:
+                console.info('kappa values for superclasses   :' + str(new_proco_loss.estimator.kappa[100:-1]))
+
 
         ce_loss_all_avg.append(ce_loss_all.avg)
         scl_loss_all_avg.append(scl_loss_all.avg)
-        tu_loss_all_avg.append(tu_loss_all.avg)
         top1_avg.append(top1.avg)
 
         plot_loss(ce_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
                   name='CE_loss.png')
         plot_loss(scl_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
                   name='SCL_loss.png')
-        plot_loss(tu_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
-                  name='TU_loss.png')
         plot_loss(top1_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='ACC.png')
 
         if is_distributed:
             dist.barrier()
 
-        if rank == 0:
-            acc1, many, med, few, _, _ = validate(train_loader, val_loader, model, criterion_ce, config, console)
+        if rank != -1:
+            acc1, many, med, few, total_labels, all_preds, all_features = validate(train_loader, val_loader, model, criterion_ce, config, console)
 
             is_best = acc1 > best_acc1
             best_acc1 = max(acc1, best_acc1)
@@ -387,7 +449,19 @@ def train_uvp(rank, world_size, config, console):
             plot_loss(top1_val_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
                       name='ACC_validation.png')
 
-    if rank == 0:
+            if epoch % 20 == 0:
+                plot_tsne_from_validate(
+                    all_features=all_features,
+                    total_labels=total_labels,
+                    class_to_superclass=leaf_to_superclass_dict,
+                    leaf_class_names=leaf_class_names,
+                    super_class_names=super_class_names,
+                    title_prefix="ValSet",
+                    save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
+                    epoch=epoch  # e.g. if you're at epoch 20
+                )
+
+    if rank != -1:
         # Create a plot of the loss values
         plot_loss(ce_loss_all_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='CE_loss.png')
         plot_loss(scl_loss_all_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='SCL_loss.png')
@@ -404,7 +478,7 @@ def train_uvp(rank, world_size, config, console):
     if is_distributed:
         dist.barrier()
 
-    if rank == 0:
+    if rank != -1:
         # load best model
         saved_weights_best = f'model_weights_best.pth'
         saved_weights_file_best = os.path.join(config.training_path, saved_weights_best)
@@ -434,8 +508,7 @@ def train_uvp(rank, world_size, config, console):
                                  shuffle=True,
                                  num_workers=config.training_contrastive.num_workers)
 
-        acc1, many, med, few, total_labels, all_preds = validate(train_loader, test_loader, model, criterion_ce, config,
-                                                                 console)
+        acc1, many, med, few, total_labels, all_preds, all_features = validate(train_loader, test_loader, model, criterion_ce, config, console)
 
         total_labels = total_labels.cpu().numpy()
         all_preds = all_preds.cpu().numpy()
@@ -463,6 +536,19 @@ def train_uvp(rank, world_size, config, console):
         console.info('************* Evaluation Report *************')
         console.info(report)
         console.save_log(config.training_path)
+
+        console.info('************* Plot T-sne *************')
+
+        plot_tsne_from_validate(
+            all_features=all_features,
+            total_labels=total_labels,
+            class_to_superclass=leaf_to_superclass_dict,
+            leaf_class_names=leaf_class_names,
+            super_class_names=super_class_names,
+            title_prefix="ValSet",
+            save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
+            epoch=epoch  # e.g. if you're at epoch 20
+        )
 
 
 def train_cifar(rank, world_size, config, console):
