@@ -9,12 +9,11 @@ import numpy as np
 
 
 class UvpDataset(Dataset):
-    def __init__(self, root_dir, num_class, csv_file=None, transform=None, phase='train', gray=True,
+    def __init__(self, root_dir, csv_file=None, transform=None, phase='train', gray=True,
                  permitted_formats=None):
         self.root_dir = os.path.join(root_dir, 'output')
         if not os.path.exists(self.root_dir):
             self.root_dir = root_dir
-        self.num_class = num_class
         self.csv_file = csv_file
         self.transform = transform
         self.phase = phase

@@ -194,14 +194,12 @@ def train_uvp(rank, world_size, config, console):
 
     # Create uvp dataset datasets for training and validation
     train_dataset = UvpDataset(root_dir=config.input_folder_train,
-                               num_class=config.sampling.num_class,
                                csv_file=config.input_csv_train,
                                transform=transform_train,
                                phase=config.phase,
                                gray=config.training_contrastive.gray)
 
     val_dataset = UvpDataset(root_dir=config.input_folder_test,
-                             num_class=config.sampling.num_class,
                              csv_file=config.input_csv_val,
                              transform=transform_val,
                              phase='test',
@@ -227,7 +225,7 @@ def train_uvp(rank, world_size, config, console):
                             num_workers=config.training_contrastive.num_workers,
                             sampler=sampler_val)
 
-    model = resnext.Model(name=config.training_contrastive.architecture_type, num_classes=config.sampling.num_class,
+    model = resnext.Model(name=config.training_contrastive.architecture_type, num_classes=train_dataset.num_class,
                           feat_dim=config.training_contrastive.feat_dim,
                           use_norm=config.training_contrastive.use_norm,
                           gray=config.training_contrastive.gray)
@@ -263,7 +261,7 @@ def train_uvp(rank, world_size, config, console):
     # Loss criterion and optimizer
     # class_counts = train_dataset.data_frame['label'].value_counts().sort_index().tolist()
     # total_samples = sum(class_counts)
-    # class_weights = [total_samples / (config.sampling.num_class * count) for count in class_counts]
+    # class_weights = [total_samples / (train_dataset.num_class * count) for count in class_counts]
     # class_weights_tensor = torch.FloatTensor(class_weights)
     # class_weights_tensor_normalize = class_weights_tensor / class_weights_tensor.sum()
 
@@ -283,13 +281,13 @@ def train_uvp(rank, world_size, config, console):
         criterion_ce = LogitAdjust(cls_num_list, device=device)
         criterion_scl = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
                                   temperature=config.training_contrastive.temp,
-                                  num_classes=config.sampling.num_class,
+                                  num_classes=train_dataset.num_class,
                                   device=device)
 
     elif config.training_contrastive.loss == 'amproco':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
 
-        offset = config.sampling.num_class
+        offset = train_dataset.num_class
         super_to_protos = {}  # maps superclass_index -> list of prototype IDs
         for i, (sname, leaf_list) in enumerate(super_classes_id):
             p_i = prototypes_per_superclass[i]
@@ -309,13 +307,13 @@ def train_uvp(rank, world_size, config, console):
                 path = [root_node_id] + proto_ids + [leaf]
                 leaf_path_map[leaf] = path
 
-        num_leaves = config.sampling.num_class
+        num_leaves = train_dataset.num_class
         sum_protos = sum(prototypes_per_superclass)
         num_nodes = num_leaves + sum_protos + 1
 
         assert (offset - 1) < num_nodes, "All IDs must be in range"
 
-        leaf_node_ids = list(range(config.sampling.num_class))
+        leaf_node_ids = list(range(train_dataset.num_class))
         proco_loss = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
                                temperature=config.training_contrastive.temp,
                                num_classes=num_nodes,
@@ -360,7 +358,7 @@ def train_uvp(rank, world_size, config, console):
                 console.info('super class names   :' + str(super_class_names))
                 console.info('P*   :' + str(p_star))
 
-                offset = config.sampling.num_class
+                offset = train_dataset.num_class
                 superclass_to_protos = {}
                 for i, (sname, leaf_list) in enumerate(super_classes_id):
                     p_i = p_star[i]
@@ -372,7 +370,7 @@ def train_uvp(rank, world_size, config, console):
 
                 root_node_id = offset
                 offset += 1
-                num_nodes = config.sampling.num_class + sum(p_star) + 1
+                num_nodes = train_dataset.num_class + sum(p_star) + 1
 
                 leaf_path_map = {}
                 for i, (sname, leaf_list) in enumerate(super_classes_id):
@@ -381,7 +379,7 @@ def train_uvp(rank, world_size, config, console):
                         # path => [root_node_id] + proto_ids + [leaf_id]
                         leaf_path_map[leaf_id] = [root_node_id] + proto_ids + [leaf_id]
 
-                leaf_node_ids = list(range(config.sampling.num_class))
+                leaf_node_ids = list(range(train_dataset.num_class))
 
                 new_proco_loss = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
                                            temperature=config.training_contrastive.temp,
@@ -499,7 +497,6 @@ def train_uvp(rank, world_size, config, console):
         model.to(device)
 
         test_dataset = UvpDataset(root_dir=config.input_folder_test,
-                                  num_class=config.sampling.num_class,
                                   csv_file=config.input_csv_test,
                                   transform=transform_val,
                                   phase='test',
@@ -564,7 +561,6 @@ def train_cifar(rank, world_size, config, console):
     console.info(f"Running on:  {device}")
 
     config.device = device
-    config.sampling.num_class = 100
 
     if config.training_contrastive.num_epoch == 200:
         config.training_contrastive.schedule = [160, 180]
@@ -624,6 +620,8 @@ def train_cifar(rank, world_size, config, console):
     console.info(f'===> Training data length {len(train_dataset)}')
     console.info(f'===> Validation data length {len(val_dataset)}')
 
+    train_dataset.num_class = 100
+
     if is_distributed:
         sampler_train = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
         # sampler_val = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank)
@@ -644,7 +642,7 @@ def train_cifar(rank, world_size, config, console):
 
     if config.training_contrastive.architecture_type == 'resnet32':
         model = resnet_cifar.Model(name=config.training_contrastive.architecture_type,
-                                   num_classes=config.sampling.num_class,
+                                   num_classes=train_dataset.num_class,
                                    feat_dim=config.training_contrastive.feat_dim,
                                    use_norm=config.training_contrastive.use_norm)
     else:
@@ -696,13 +694,13 @@ def train_cifar(rank, world_size, config, console):
         criterion_ce = LogitAdjust(cls_num_list, device=device)
         criterion_scl = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
                                   temperature=config.training_contrastive.temp,
-                                  num_classes=config.sampling.num_class,
+                                  num_classes=train_dataset.num_class,
                                   device=device)
 
     elif config.training_contrastive.loss == 'amproco':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
 
-        offset = config.sampling.num_class
+        offset = train_dataset.num_class
         super_to_protos = {}  # maps superclass_index -> list of prototype IDs
         for i, (sname, leaf_list) in enumerate(super_classes_id):
             p_i = prototypes_per_superclass[i]
@@ -722,13 +720,13 @@ def train_cifar(rank, world_size, config, console):
                 path = [root_node_id] + proto_ids + [leaf]
                 leaf_path_map[leaf] = path
 
-        num_leaves = config.sampling.num_class
+        num_leaves = train_dataset.num_class
         sum_protos = sum(prototypes_per_superclass)
         num_nodes = num_leaves + sum_protos + 1
 
         assert (offset - 1) < num_nodes, "All IDs must be in range"
 
-        leaf_node_ids = list(range(config.sampling.num_class))
+        leaf_node_ids = list(range(train_dataset.num_class))
         proco_loss = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
                                temperature=config.training_contrastive.temp,
                                num_classes=num_nodes,
@@ -773,7 +771,7 @@ def train_cifar(rank, world_size, config, console):
                 console.info('super class names   :' + str(super_class_names))
                 console.info('P*   :' + str(p_star))
 
-                offset = config.sampling.num_class
+                offset = train_dataset.num_class
                 superclass_to_protos = {}
                 for i, (sname, leaf_list) in enumerate(super_classes_id):
                     p_i = p_star[i]
@@ -785,7 +783,7 @@ def train_cifar(rank, world_size, config, console):
 
                 root_node_id = offset
                 offset += 1
-                num_nodes = config.sampling.num_class + sum(p_star) + 1
+                num_nodes = train_dataset.num_class + sum(p_star) + 1
 
                 leaf_path_map = {}
                 for i, (sname, leaf_list) in enumerate(super_classes_id):
@@ -794,7 +792,7 @@ def train_cifar(rank, world_size, config, console):
                         # path => [root_node_id] + proto_ids + [leaf_id]
                         leaf_path_map[leaf_id] = [root_node_id] + proto_ids + [leaf_id]
 
-                leaf_node_ids = list(range(config.sampling.num_class))
+                leaf_node_ids = list(range(train_dataset.num_class))
 
                 new_proco_loss = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
                                            temperature=config.training_contrastive.temp,
@@ -1067,7 +1065,7 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
     ce_loss_all = AverageMeter('CE_Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
 
-    total_logits = torch.empty((0, config.sampling.num_class)).to(config.device)
+    total_logits = torch.empty((0, train_loader.dataset.num_class)).to(config.device)
     total_labels = torch.empty(0, dtype=torch.long).to(config.device)
     all_features = []
 
