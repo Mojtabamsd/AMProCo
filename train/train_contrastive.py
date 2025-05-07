@@ -205,11 +205,6 @@ def train_uvp(rank, world_size, config, console):
                              phase='test',
                              gray=config.training_contrastive.gray)
 
-    class_counts = train_dataset.data_frame['label'].value_counts().sort_index().tolist()
-    total_samples = sum(class_counts)
-    class_weights = [total_samples / (config.sampling.num_class * count) for count in class_counts]
-    class_weights_tensor = torch.FloatTensor(class_weights)
-    class_weights_tensor_normalize = class_weights_tensor / class_weights_tensor.sum()
 
     if is_distributed:
         sampler_train = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
@@ -264,20 +259,26 @@ def train_uvp(rank, world_size, config, console):
         latest_epoch = 0
 
     # Loss criterion and optimizer
-    cls_num_list = train_dataset.get_cls_num_list()
+    # class_counts = train_dataset.data_frame['label'].value_counts().sort_index().tolist()
+    # total_samples = sum(class_counts)
+    # class_weights = [total_samples / (config.sampling.num_class * count) for count in class_counts]
+    # class_weights_tensor = torch.FloatTensor(class_weights)
+    # class_weights_tensor_normalize = class_weights_tensor / class_weights_tensor.sum()
+
+    cls_num_list = train_dataset.data_frame['label'].value_counts().sort_index().tolist()
     class_frequencies = torch.tensor(cls_num_list, dtype=torch.float32)
     class_frequencies = class_frequencies.to(config.device)
 
     config.cls_num = len(cls_num_list)
 
     leaf_class_names, super_classes_id, \
-    leaf_to_superclass_dict, super_class_names = leaf_class(train_dataset)
+    leaf_to_superclass_dict, super_class_names = leaf_class(train_dataset, config)
 
     prototypes_per_superclass = [1] * config.training_contrastive.superclass_num
     assert len(prototypes_per_superclass) == 20, "We have 20 superclasses"
 
     if config.training_contrastive.loss == 'proco':
-        criterion_ce = LogitAdjust(class_counts, device=device)
+        criterion_ce = LogitAdjust(cls_num_list, device=device)
         criterion_scl = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
                                   temperature=config.training_contrastive.temp,
                                   num_classes=config.sampling.num_class,
@@ -598,7 +599,7 @@ def train_cifar(rank, world_size, config, console):
     config.cls_num = len(cls_num_list)
 
     leaf_class_names, super_classes_id, \
-    leaf_to_superclass_dict, super_class_names = leaf_class(train_dataset)
+    leaf_to_superclass_dict, super_class_names = leaf_class(train_dataset, config)
 
     prototypes_per_superclass = [1] * config.training_contrastive.superclass_num
     assert len(prototypes_per_superclass) == 20, "We have 20 superclasses"
@@ -1041,11 +1042,16 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
         return acc1, many, med, few, total_labels, all_preds, all_features
 
 
-def leaf_class(train_dataset):
+def leaf_class(train_dataset, config):
+
+    if config.training_contrastive.dataset=='uvp':
+        superclass = train_dataset.UVP_SUPERCLASSES
+    else:
+        superclass = CIFAR100_SUPERCLASSES
 
     train_class2idx = train_dataset.class_to_idx
     super_classes_id = []
-    for superclass_name, leaf_names in CIFAR100_SUPERCLASSES:
+    for superclass_name, leaf_names in superclass:
         leaf_ids = [train_class2idx[leaf_name] for leaf_name in leaf_names]
         super_classes_id.append((superclass_name, leaf_ids))
 

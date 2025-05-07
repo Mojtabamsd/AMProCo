@@ -28,11 +28,15 @@ class UvpDataset(Dataset):
             self.data_frame, self.data_frame_val = train_test_split(self.data_frame, test_size=0.2, random_state=42)
 
         # regrouping
-        # ren = pd.read_csv("./data_preparation/label_to_int.csv")
-        ren = pd.read_csv(root_dir + "/label_to_int.csv")
+        ren = pd.read_csv("./data_preparation/label_to_int.csv")
+        # ren = pd.read_csv(root_dir + "/label_to_int.csv")
         unique_labels = sorted(ren['label'].unique())
-        self.label_to_int = {label: i for i, label in enumerate(unique_labels)}
+        self.class_to_idx = {label: i for i, label in enumerate(unique_labels)}
         self.num_class = len(unique_labels)
+
+        # create superclasses
+        superclass_dict = ren.groupby('superclass')['label'].apply(list).to_dict()
+        self.UVP_SUPERCLASSES = [(k, v) for k, v in superclass_dict.items()]
 
     def __len__(self):
         if self.csv_file and self.phase == 'val':
@@ -50,7 +54,7 @@ class UvpDataset(Dataset):
             img_name = relative_path.replace('output/', '')
             img_path = os.path.join(self.root_dir, img_name)
             label = self.data_frame_val.iloc[idx, self.data_frame_val.columns.get_loc('label')]
-            int_label = self.label_to_int[label]
+            int_label = self.class_to_idx[label]
             image = self.load_image(img_path)
             return image, int_label, img_name
         elif self.csv_file:
@@ -61,7 +65,7 @@ class UvpDataset(Dataset):
 
             img_path = os.path.join(self.root_dir, img_name)
             label = self.data_frame.iloc[idx, self.data_frame.columns.get_loc('label')]
-            int_label = self.label_to_int[label]
+            int_label = self.class_to_idx[label]
             image = self.load_image(img_path)
             return image, int_label, img_name
         else:
@@ -111,7 +115,7 @@ class UvpDataset(Dataset):
         return ext.lower() in self.permitted_formats
 
     def get_string_label(self, int_label):
-        if self.label_to_int is not None:
-            return list(self.label_to_int.keys())[list(self.label_to_int.values()).index(int_label)]
+        if self.class_to_idx is not None:
+            return list(self.class_to_idx.keys())[list(self.class_to_idx.values()).index(int_label)]
         else:
             return None
