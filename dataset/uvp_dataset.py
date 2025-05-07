@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from sklearn.model_selection import train_test_split
+import numpy as np
 
 
 class UvpDataset(Dataset):
@@ -33,8 +34,11 @@ class UvpDataset(Dataset):
         elif self.num_class == 25:
             self.label_to_int = {label: i for i, label in enumerate(ren['regrouped1'].unique())}
         else:
-            unique_labels = sorted(self.data_frame['label'].unique())
+            # ren = pd.read_csv("./data_preparation/label_to_int.csv")
+            ren = pd.read_csv(root_dir + "/label_to_int.csv")
+            unique_labels = sorted(ren['label'].unique())
             self.label_to_int = {label: i for i, label in enumerate(unique_labels)}
+            self.num_class = len(unique_labels)
 
     def __len__(self):
         if self.csv_file and self.phase == 'val':
@@ -73,7 +77,7 @@ class UvpDataset(Dataset):
             image = self.load_image(img_path)
             return image, '', img_name
 
-    def load_image(self, img_path):
+    def load_image(self, img_path, invert=True):
         image = Image.open(img_path)
         if image.mode not in ['L', 'RGB']:
             # Convert other modes like 'RGBA' or 'P' to 'RGB'
@@ -87,6 +91,13 @@ class UvpDataset(Dataset):
                 # Convert grayscale to RGB by repeating the grayscale channel three times
                 image = image.convert('L')
                 image = Image.merge("RGB", (image, image, image))
+
+        if invert:
+            img_gray = image.convert("L")
+            img_array = np.array(img_gray)
+            max_value = np.iinfo(img_array.dtype).max
+            inverted_array = max_value - img_array
+            image = Image.fromarray(inverted_array)
 
         if self.transform is not None:
             if self.phase == 'train' and hasattr(self.transform, '__len__') and len(self.transform) == 3:
