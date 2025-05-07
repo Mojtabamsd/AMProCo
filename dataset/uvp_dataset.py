@@ -28,17 +28,11 @@ class UvpDataset(Dataset):
             self.data_frame, self.data_frame_val = train_test_split(self.data_frame, test_size=0.2, random_state=42)
 
         # regrouping
-        ren = pd.read_csv("./data_preparation/regrouping.csv")
-        if self.num_class == 13:
-            self.label_to_int = {label: i for i, label in enumerate(ren['regrouped2'].unique())}
-        elif self.num_class == 25:
-            self.label_to_int = {label: i for i, label in enumerate(ren['regrouped1'].unique())}
-        else:
-            # ren = pd.read_csv("./data_preparation/label_to_int.csv")
-            ren = pd.read_csv(root_dir + "/label_to_int.csv")
-            unique_labels = sorted(ren['label'].unique())
-            self.label_to_int = {label: i for i, label in enumerate(unique_labels)}
-            self.num_class = len(unique_labels)
+        # ren = pd.read_csv("./data_preparation/label_to_int.csv")
+        ren = pd.read_csv(root_dir + "/label_to_int.csv")
+        unique_labels = sorted(ren['label'].unique())
+        self.label_to_int = {label: i for i, label in enumerate(unique_labels)}
+        self.num_class = len(unique_labels)
 
     def __len__(self):
         if self.csv_file and self.phase == 'val':
