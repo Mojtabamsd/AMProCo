@@ -45,21 +45,17 @@ def train_contrastive(config_path, input_path, output_path):
     input_folder = Path(input_path)
     output_folder = Path(output_path)
 
-    if config.training_contrastive.dataset == 'uvp':
-        input_folder_train = input_folder / "train"
-        input_folder_test = input_folder / "test"
-    else:
-        input_folder_train = input_folder
-        input_folder_test = input_folder
+    input_folder_train = input_folder
+    input_folder_test = input_folder
 
     console = Console(output_folder)
     console.info("Training started ...")
 
-    sampled_images_csv_filename = "sampled_images.csv"
-    sampled_images_csv_filename_val = "sampled_images_val.csv"
-    input_csv_train = input_folder_train / sampled_images_csv_filename
-    input_csv_test = input_folder_test / sampled_images_csv_filename
-    input_csv_val = input_folder_test / sampled_images_csv_filename_val
+    sampled_images_csv_filename1 = "sampled_images_train.csv"
+    sampled_images_csv_filename2 = "sampled_images_test.csv"
+    input_csv_train = input_folder_train / sampled_images_csv_filename1
+    input_csv_test = input_folder_test / sampled_images_csv_filename2
+    input_csv_val = input_folder_test / sampled_images_csv_filename2
 
     config.input_folder_train = str(input_folder_train)
     config.input_folder_test = str(input_folder_test)
