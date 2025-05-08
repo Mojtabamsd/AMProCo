@@ -212,7 +212,7 @@ def memory_usage(config, model, device):
 
 def shot_acc(preds, labels, train_data, many_shot_thr=100, low_shot_thr=20, acc_per_cls=False):
     if type(train_data.dataset).__name__ == 'UvpDataset':
-        training_labels = np.array(train_data.dataset.data_frame['label'].map(train_data.dataset.label_to_int))
+        training_labels = np.array(train_data.dataset.data_frame['label'].map(train_data.dataset.class_to_idx))
     else:
         if isinstance(train_data, np.ndarray):
             training_labels = np.array(train_data).astype(int)
