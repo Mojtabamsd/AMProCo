@@ -30,16 +30,16 @@ training_contrastive:
   architecture_type: 'resnet18' # choose 'resnet18', 'resnet34', 'resnet50' or 'resnext50'
   batch_size: 128
   accumulation_steps: 4  #for mini batch size --- the training performs like batch_size // accumulation_steps i.e. 256=64*4
-  num_workers: 10
+  num_workers: 15
   gray: True
   target_size: [227, 227]  #image target size
   padding: True # pad image to preserve aspect ratio
   pre_train: None # True or None
   learning_rate: 0.3
   momentum: 0.9 # momentum of SGD solver (default: 0.9)
-  weight_decay: 0.0004 #weight decay (default: 2e-4)
+  weight_decay: 0.0002 #weight decay (default: 2e-4)
   cos: True #lr decays by cosine scheduler
-  schedule: [10, 20, 30, 40, 50] # learning rate schedule (when to drop lr by 10x)')
+  schedule: [160, 180] # learning rate schedule (when to drop lr by 10x)')
   num_epoch: 90
   warmup_epoch: 5 # warmup epochs
   twostage_epoch: 60 # two-stage training epoch for running adaptive multi-prototype stage
