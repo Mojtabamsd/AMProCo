@@ -515,7 +515,7 @@ def train_uvp(rank, world_size, config, console):
         report = classification_report(
             total_labels,
             all_preds,
-            target_names=train_dataset.label_to_int,
+            target_names=train_dataset.class_to_idx,
             digits=6,
         )
 
