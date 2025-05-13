@@ -546,7 +546,7 @@ def train_uvp(rank, world_size, config, console):
             super_class_names=super_class_names,
             title_prefix="ValSet",
             save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
-            epoch=epoch  # e.g. if you're at epoch 20
+            epoch=config.training_contrastive.num_epoch
         )
 
 
