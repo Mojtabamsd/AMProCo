@@ -1240,170 +1240,96 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
 
     return p_star, mixture_params
 
+from scipy.special import iv, logsumexp
 
-def find_best_vmf_mixture_bic(feats_sc, k_max=5, delta_min=100):
+def find_best_vmf_mixture_bic(X, k_max=5, delta_min=10.0):
     """
-    feats_sc: shape [N_sc, feat_dim]
-    returns:
-        best_k: the number of prototypes with the minimal BIC
-        best_params: a list of (pi_j, mu_j, kappa_j) for j=1..best_k
+    X : [N, D]  unit-norm features of a superclass
+    Returns best_k, params_list
     """
-    min_improvement = delta_min
-    best_k = 1
-    best_bic = float('inf')
-    best_params = None
-
-    N_sc, dim = feats_sc.shape
-
-    prev_bic = None
-    prev_params = None
+    N, D = X.shape
+    best_k, best_bic, best_params = 1, np.inf, None
+    prev_bic = np.inf
 
     for k in range(1, k_max + 1):
-        # 1) Fit a mixture-of-vMF with k components to feats_sc
-        mixture_params_k = fit_vmf_mixture(feats_sc, k)
+        params = fit_vmf_mixture(X, k)
+        # ------------ log-likelihood (vectorised) -----------------------
+        pi   = np.array([p[0] for p in params])           # [K]
+        mu   = np.stack([p[1] for p in params], axis=0)   # [K, D]
+        kappa= np.array([p[2] for p in params])           # [K]
 
-        # 2) compute log-likelihood: sum_{i=1..N_sc} log( sum_{j=1..k} pi_j * vmf_pdf(...) )
-        logL = 0.0
-        for i in range(N_sc):
-            x = feats_sc[i]
-            pdf_sum = 0.0
-            for (pi_j, mu_j, kappa_j) in mixture_params_k:
-                pdf_sum += pi_j * vmf_pdf(x, mu_j, kappa_j)
-            logL += np.log(pdf_sum + 1e-20)
+        log_prob = log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32)
+        logL = logsumexp(log_prob, axis=1).sum()
 
-        # 3) compute param count
-        #   each component: (dim-1) for mu, 1 for kappa, total k comps => k*(dim)
-        #   plus (k-1) for pi_j. So total = k*(dim) + (k-1).
-        #   or you can do k*(dim -1) + k + (k-1), etc.
-        #   You can approximate it as:
-        param_count = k * (dim) + (k - 1)
+        # ------------ BIC ----------------------------------------------
+        param_count = k * D + (k - 1)                     # µ + κ + π
+        bic = -2.0 * logL + param_count * np.log(N)
 
-        # 4) BIC = -2 * logL + param_count * ln(N_sc)
-        bic_value = -2.0 * logL + param_count * np.log(N_sc)
+        # keep global minimum
+        if bic < best_bic:
+            best_bic, best_k, best_params = bic, k, params
 
-        if k == 1:
-            best_k = 1
-            best_params = mixture_params_k
-            best_bic = bic_value
-            prev_bic = bic_value
-            prev_params = mixture_params_k
-        else:
-            delta_bic = prev_bic - bic_value
-            print('in k = ' + str(k) + '   , the delta is:  ' + str(delta_bic))
-
-            if delta_bic < min_improvement:
-                best_k = k - 1
-                best_params = prev_params
-                best_bic = prev_bic
-                break
-            else:
-                best_k = k
-                best_params = mixture_params_k
-                best_bic = bic_value
-                prev_bic = bic_value
-                prev_params = mixture_params_k
-
-        # if bic_value < best_bic:
-        #     best_bic = bic_value
-        #     best_k = k
-        #     best_params = mixture_params_k
+        # early-stop if improvement tiny
+        if prev_bic - bic < delta_min:
+            break
+        prev_bic = bic
 
     return best_k, best_params
 
 
-def fit_vmf_mixture(feats_sc, k, max_iter=100):
+def fit_vmf_mixture(X, k, max_iter=100):
     """
-    feats_sc: shape [N, dim]
-    returns list of (pi_j, mu_j, kappa_j) for j=1..k
+    X : [N, D] (unit vectors)
+    Returns list [(pi_j, mu_j, kappa_j)] length k
     """
-    N, dim = feats_sc.shape
+    N, D = X.shape
+    # ----- initialisation -------------------------------------------------
+    rng = np.random.default_rng()
+    mu = X[rng.choice(N, size=k, replace=False)]           # K-means++ style
+    kappa = np.full(k, D, dtype=np.float64)
+    pi = np.full(k, 1.0 / k, dtype=np.float64)
 
-    # 1) Initialize pi_j, mu_j, kappa_j
-    pi = np.ones(k) / k
-    mu = np.random.randn(k, dim)
-    mu = mu / np.linalg.norm(mu, axis=1, keepdims=True)  # normalize
-    kappa = np.ones(k) * dim  # or random init
-
-    # 2) EM loop
     for _ in range(max_iter):
-        # E-step: compute responsibilities
-        # shape: R[i, j] = pi_j * vMF_pdf(x_i, mu_j, kappa_j)
-        R = np.zeros((N, k))
+        # ---------- E-step ----------------------------------------------
+        log_priors = np.log(pi + 1e-32)                    # [K]
+        log_prob = log_vmf_pdf(X, mu, kappa) + log_priors # [N, K]
+        log_resps = log_prob - logsumexp(log_prob, axis=1, keepdims=True)
+        R = np.exp(log_resps)                              # [N, K]
 
-        for j in range(k):
-            for i in range(N):
-                R[i, j] = pi[j] * vmf_pdf(feats_sc[i], mu[j], kappa[j])
-        R_sum = R.sum(axis=1, keepdims=True) + 1e-30
-        R /= R_sum  # responsibilities
-
-        # M-step: update pi_j
-        Nj = R.sum(axis=0)  # shape [k]
+        # ---------- M-step ----------------------------------------------
+        Nj = R.sum(axis=0) + 1e-12                         # [K]
         pi = Nj / N
 
-        # update mu_j, kappa_j
-        # Weighted average of the x_i
-        for j in range(k):
-            # compute the weighted sum
-            weighted_sum = np.zeros(dim)
-            for i in range(N):
-                weighted_sum += R[i, j] * feats_sc[i]
-            # normalization
-            norm = np.linalg.norm(weighted_sum)
-            if norm < 1e-8:
-                # degenerate, re-init or keep
-                continue
-            new_mu = weighted_sum / norm
-            # compute new kappa
-            # for vMF, we can approximate kappa via:
-            #   Rbar = norm / Nj[j]
-            #   kappa_j ~ (Rbar * (dim - Rbar^2)) / (1 - Rbar^2)
-            Rbar = norm / Nj[j]
-            if Rbar < 1e-6:
-                # degenerate
-                continue
-            new_kappa = (Rbar * (dim - Rbar ** 2)) / (1 - Rbar ** 2 + 1e-12)
+        # update mu and kappa component-wise
+        weighted_sum = R.T @ X                             # [K, D]
+        mu_norm = np.linalg.norm(weighted_sum, axis=1, keepdims=True) + 1e-32
+        mu = weighted_sum / mu_norm                       # [K, D]
 
-            mu[j] = new_mu
-            kappa[j] = new_kappa
+        R_bar = (mu_norm.squeeze() / Nj).clip(1e-6, 1 - 1e-6)
+        kappa = (R_bar * (D - R_bar**2)) / (1 - R_bar**2)  # approximation
 
-    # return final
-    mixture_params_k = []
-    for j in range(k):
-        mixture_params_k.append((pi[j], mu[j], kappa[j]))
-    return mixture_params_k
+    return [(pi[j], mu[j], kappa[j]) for j in range(k)]
 
 
-def vmf_pdf(x, mu, kappa):
+def log_c_p(kappa, dim):
     """
-    x, mu: numpy arrays of shape [dim], both assumed unit norm.
-    kappa: float
-    returns the PDF value as a float.
+    log of the vMF normalisation constant C_d(kappa) =
+    kappa^{d/2-1} / [(2π)^{d/2} I_{d/2-1}(kappa)]
     """
-    dotval = np.dot(x, mu)  # x, mu in R^dim
-    # log_val = kappa * dotval - logC_p(kappa, len(x))
-    log_val = kappa * dotval + logC_p(kappa, len(x))
-    return np.exp(log_val)
+    # Use log-form to avoid overflow/underflow
+    nu = dim / 2.0 - 1.0
+    log_iv = np.log(iv(nu, kappa) + 1e-300)
+    return (nu * np.log(kappa + 1e-16)) - (dim / 2.0) * np.log(2 * np.pi) - log_iv
 
 
-def logC_p(kappa, dim):
+def log_vmf_pdf(x, mu, kappa):
     """
-    Approximate or compute log of the normalization constant C_d(kappa).
-    For large kappa, or dimension not too big, you can do a piecewise approach.
-    Or call SciPy if available.
+    x : [N, D]  (unit-norm)
+    mu: [K, D]  (unit-norm)
+    kappa: [K]  (>=0)
+    returns log p(x|mu,kappa)   shape [N, K]
     """
-    # If you have scip.special.ive, you can do:
-    #   val = ive(dim/2 - 1, kappa)  # i_{nu}(kappa)
-    #   logC = np.log(val) + kappa - (dim/2 - 1)*np.log(kappa+1e-12)
-    # Return that. Example:
-    import math
-    from scipy.special import ive
-
-    if kappa < 1e-8:
-        # near zero, logC_p ~ -log(Surface of sphere), roughly
-        # e.g. log((2*pi)^(d/2) / Gamma(d/2)) ...
-        # For simplicity, return a constant. It's not critical for small kappa.
-        return (dim/2)*math.log(2*math.pi)  # crude
-    val = ive(dim/2 - 1, kappa)
-    val = max(val, 1e-300)
-    logC = math.log(val) + kappa - (dim/2 - 1)*math.log(kappa+1e-12)
-    return logC
+    # cosine similarity matrix  [N, K]
+    cos = x @ mu.T
+    log_norm = log_c_p(kappa, x.shape[1])          # [K]
+    return cos * kappa[None, :] + log_norm[None, :]
