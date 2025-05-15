@@ -1311,7 +1311,7 @@ def find_best_vmf_mixture_bic(feats_sc, k_max=5, delta_min=100):
     return best_k, best_params
 
 
-def fit_vmf_mixture(feats_sc, k, max_iter=50):
+def fit_vmf_mixture(feats_sc, k, max_iter=100):
     """
     feats_sc: shape [N, dim]
     returns list of (pi_j, mu_j, kappa_j) for j=1..k
