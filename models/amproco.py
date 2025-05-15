@@ -12,7 +12,6 @@ class HierarchicalProCoWrapper(nn.Module):
                  leaf_node_ids: list,
                  leaf_path_map: dict,
                  num_nodes: int,
-                 temperature: float = 1.0,
                  device='cuda'):
         """
         proco_loss: an instance of ProCoLoss (modified to have 'num_classes' = num_nodes).
@@ -25,7 +24,6 @@ class HierarchicalProCoWrapper(nn.Module):
         self.leaf_node_ids = leaf_node_ids
         self.leaf_path_map = leaf_path_map
         self.num_nodes = num_nodes
-        self.temperature = temperature
         self.device = device
 
     def forward(self, features, leaf_labels=None):
