@@ -1277,7 +1277,7 @@ def find_best_vmf_mixture_bic(X, k_max=5, delta_min=10.0):
     return best_k, best_params
 
 
-def fit_vmf_mixture(X, k, max_iter=5):
+def fit_vmf_mixture(X, k, max_iter=50):
     """
     X : [N, D] (unit vectors)
     Returns list [(pi_j, mu_j, kappa_j)] length k
