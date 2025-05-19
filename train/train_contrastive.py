@@ -1262,8 +1262,7 @@ def find_best_vmf_mixture_bic(X, k_max=5, delta_min=10.0):
         logL = logsumexp(log_prob, axis=1).sum()
 
         # ------------ BIC ----------------------------------------------
-        # param_count = k * D + (k - 1)                     # µ + κ + π
-        param_count = k * D + (k - 1) - k
+        param_count = k * D + (k - 1)                     # µ + κ + π
         bic = -2.0 * logL + param_count * np.log(N)
 
         # keep global minimum
@@ -1278,7 +1277,7 @@ def find_best_vmf_mixture_bic(X, k_max=5, delta_min=10.0):
     return best_k, best_params
 
 
-def fit_vmf_mixture(X, k, max_iter=10):
+def fit_vmf_mixture(X, k, max_iter=5):
     """
     X : [N, D] (unit vectors)
     Returns list [(pi_j, mu_j, kappa_j)] length k
