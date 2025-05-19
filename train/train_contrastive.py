@@ -31,6 +31,7 @@ import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 import numpy as np
 from tools.visualization import plot_tsne_from_validate
+from scipy.special import iv, logsumexp
 
 
 def train_contrastive(config_path, input_path, output_path):
@@ -1240,7 +1241,6 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
 
     return p_star, mixture_params
 
-from scipy.special import iv, logsumexp
 
 def find_best_vmf_mixture_bic(X, k_max=5, delta_min=10.0):
     """
@@ -1277,7 +1277,7 @@ def find_best_vmf_mixture_bic(X, k_max=5, delta_min=10.0):
     return best_k, best_params
 
 
-def fit_vmf_mixture(X, k, max_iter=100):
+def fit_vmf_mixture(X, k, max_iter=10):
     """
     X : [N, D] (unit vectors)
     Returns list [(pi_j, mu_j, kappa_j)] length k
@@ -1292,7 +1292,7 @@ def fit_vmf_mixture(X, k, max_iter=100):
     for _ in range(max_iter):
         # ---------- E-step ----------------------------------------------
         log_priors = np.log(pi + 1e-32)                    # [K]
-        log_prob = log_vmf_pdf(X, mu, kappa) + log_priors # [N, K]
+        log_prob = log_vmf_pdf(X, mu, kappa) + log_priors  # [N, K]
         log_resps = log_prob - logsumexp(log_prob, axis=1, keepdims=True)
         R = np.exp(log_resps)                              # [N, K]
 
