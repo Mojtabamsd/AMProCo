@@ -1269,10 +1269,10 @@ def find_best_vmf_mixture_bic(X, k_max=5, delta_min=10.0):
         if bic < best_bic:
             best_bic, best_k, best_params = bic, k, params
 
-        # early-stop if improvement tiny
-        if prev_bic - bic < delta_min:
-            break
-        prev_bic = bic
+        # # early-stop if improvement tiny
+        # if prev_bic - bic < delta_min:
+        #     break
+        # prev_bic = bic
 
     return best_k, best_params
 
