@@ -1313,7 +1313,7 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
         best_k, best_params = select_vmf_k(
             feats_sc,
             k_max=k_max,
-            criterion="ICL",  # or "AIC", "BIC", or "ICL"
+            criterion="AIC",  # or "AIC", "BIC", or "ICL"
             restarts=10,
             delta_stop=delta_min
         )
