@@ -1230,65 +1230,97 @@ def cal_feats(model, train_loader, leaf_to_superclass_dict, config):
     return superclass_feats
 
 
-def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
-    p_star = []
-    mixture_params = {}  # store (pi_j, mu_j, kappa_j) for each j in [1.. best_k]
-    for sc_idx in range(superclass_num):
-        feats_sc = np.array(superclass_feats[sc_idx])  # shape [N_sc, feat_dim]
-        best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=k_max, delta_min=delta_min)
-        p_star.append(best_k)
-        mixture_params[sc_idx] = best_params
-
-    return p_star, mixture_params
-
-
-def compute_loglik(X, params):
+def _posterior_and_entropy(X, params):
     """
-    X       : [N, D] unit vectors
-    params  : list[(pi, mu, kappa)] length k
-    returns : scalar log-likelihood  Σ_i log Σ_j π_j f_j(x_i)
+    Returns responsibilities, hard labels, and cluster-entropy
+    needed for ICL.
     """
-    pi    = np.array([p[0] for p in params])               # [K]
-    mu    = np.stack([p[1] for p in params], axis=0)       # [K, D]
-    kappa = np.array([p[2] for p in params])               # [K]
+    pi   = np.array([p[0] for p in params])
+    mu   = np.stack([p[1] for p in params], axis=0)
+    kappa= np.array([p[2] for p in params])
+
+    log_prob = log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32)
+    log_resp = log_prob - logsumexp(log_prob, axis=1, keepdims=True)
+    resp     = np.exp(log_resp)
+    entropy  = -(resp * log_resp).sum()           # Σ_i Σ_j r_ij log r_ij
+    return resp, log_resp, entropy
+
+
+def _loglik_vmf(X, params):
+    """total log-likelihood of X given mixture params list."""
+    pi   = np.array([p[0] for p in params])
+    mu   = np.stack([p[1] for p in params], axis=0)
+    kappa= np.array([p[2] for p in params])
 
     log_prob = log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32)
     return logsumexp(log_prob, axis=1).sum()
 
 
-def find_best_vmf_mixture_bic(X, k_max=5, delta_min=10.0, n_restarts=10):
+def select_vmf_k(
+        X,
+        k_max      = 5,
+        criterion  = "BIC",   #  "AIC", "BIC", or "ICL"
+        restarts   = 5,
+        delta_stop = 10.0
+    ):
     """
-    X : [N, D] unit-norm features of a superclass
-    Returns best_k, best_params  (best_params is list of tuples)
+    X         : [N,D] unit-norm features of one superclass
+    criterion : which score to minimise: 'AIC', 'BIC', or 'ICL'
+    returns   : best_k, best_params
     """
     N, D = X.shape
-    best_k, best_bic, best_params = 1, np.inf, None
-    prev_bic = np.inf
+    best_k, best_score, best_params = 1, np.inf, None
+    prev_score = np.inf
 
     for k in range(1, k_max + 1):
 
-        # -------- EM restarts: keep mixture with highest logL -------
+        # ---------- multiple EM restarts --------------------------------
         best_logL_k, best_params_k = -np.inf, None
-        for _ in range(n_restarts):
-            params_r = fit_vmf_mixture(X, k)
-            logL_r   = compute_loglik(X, params_r)
-            if logL_r > best_logL_k:
-                best_logL_k, best_params_k = logL_r, params_r
+        for _ in range(restarts):
+            params_try = fit_vmf_mixture(X, k)
+            logL_try   = _loglik_vmf(X, params_try)       # helper below
+            if logL_try > best_logL_k:
+                best_logL_k, best_params_k = logL_try, params_try
 
-        # --------- BIC for the best run at this k --------------------
-        param_count = k * D + (k - 1)                       # (d-1)+1 per comp + mixing weights
-        bic_k = -2.0 * best_logL_k + param_count * np.log(N)
+        # ---------- information criteria --------------------------------
+        p_free = k * (D - 1 + 1) + (k - 1)          # µ (D-1), κ (1), π (k-1)
+        if criterion.upper() == "AIC":
+            score = -2.0 * best_logL_k + 2 * p_free
+        else:
+            score = -2.0 * best_logL_k + p_free * np.log(N)   # BIC term
+            if criterion.upper() == "ICL":
+                # subtract 2 * cluster-entropy term
+                _, _, h = _posterior_and_entropy(X, best_params_k)
+                score += 2.0 * h
 
-        # keep global best no matter what
-        if bic_k < best_bic:
-            best_bic, best_k, best_params = bic_k, k, best_params_k
+        # ---------- keep the global minimum -----------------------------
+        if score < best_score:
+            best_k, best_score, best_params = k, score, best_params_k
 
-        # early-stop if improvement tiny
-        if prev_bic - bic_k < delta_min:
+        # ---------- optional early-stop ---------------------------------
+        if prev_score - score < delta_stop:
             break
-        prev_bic = bic_k
+        prev_score = score
 
     return best_k, best_params
+
+def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
+    p_star = []
+    mixture_params = {}  # store (pi_j, mu_j, kappa_j) for each j in [1.. best_k]
+    for sc_idx in range(superclass_num):
+        feats_sc = np.array(superclass_feats[sc_idx])  # shape [N_sc, feat_dim]
+        # best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=k_max, delta_min=delta_min)
+        best_k, best_params = select_vmf_k(
+            feats_sc,
+            k_max=k_max,
+            criterion="ICL",  # or "AIC", "BIC", or "ICL"
+            restarts=10,
+            delta_stop=delta_min
+        )
+        p_star.append(best_k)
+        mixture_params[sc_idx] = best_params
+
+    return p_star, mixture_params
 
 
 def fit_vmf_mixture(X, k, max_iter=50):
