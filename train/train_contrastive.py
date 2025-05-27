@@ -1242,37 +1242,51 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     return p_star, mixture_params
 
 
-def find_best_vmf_mixture_bic(X, k_max=5, delta_min=10.0):
+def compute_loglik(X, params):
     """
-    X : [N, D]  unit-norm features of a superclass
-    Returns best_k, params_list
+    X       : [N, D] unit vectors
+    params  : list[(pi, mu, kappa)] length k
+    returns : scalar log-likelihood  Σ_i log Σ_j π_j f_j(x_i)
+    """
+    pi    = np.array([p[0] for p in params])               # [K]
+    mu    = np.stack([p[1] for p in params], axis=0)       # [K, D]
+    kappa = np.array([p[2] for p in params])               # [K]
+
+    log_prob = log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32)
+    return logsumexp(log_prob, axis=1).sum()
+
+
+def find_best_vmf_mixture_bic(X, k_max=5, delta_min=10.0, n_restarts=10):
+    """
+    X : [N, D] unit-norm features of a superclass
+    Returns best_k, best_params  (best_params is list of tuples)
     """
     N, D = X.shape
     best_k, best_bic, best_params = 1, np.inf, None
     prev_bic = np.inf
 
     for k in range(1, k_max + 1):
-        params = fit_vmf_mixture(X, k)
-        # ------------ log-likelihood (vectorised) -----------------------
-        pi   = np.array([p[0] for p in params])           # [K]
-        mu   = np.stack([p[1] for p in params], axis=0)   # [K, D]
-        kappa= np.array([p[2] for p in params])           # [K]
 
-        log_prob = log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32)
-        logL = logsumexp(log_prob, axis=1).sum()
+        # -------- EM restarts: keep mixture with highest logL -------
+        best_logL_k, best_params_k = -np.inf, None
+        for _ in range(n_restarts):
+            params_r = fit_vmf_mixture(X, k)
+            logL_r   = compute_loglik(X, params_r)
+            if logL_r > best_logL_k:
+                best_logL_k, best_params_k = logL_r, params_r
 
-        # ------------ BIC ----------------------------------------------
-        param_count = k * D + (k - 1)                     # µ + κ + π
-        bic = -2.0 * logL + param_count * np.log(N)
+        # --------- BIC for the best run at this k --------------------
+        param_count = k * D + (k - 1)                       # (d-1)+1 per comp + mixing weights
+        bic_k = -2.0 * best_logL_k + param_count * np.log(N)
 
-        # keep global minimum
-        if bic < best_bic:
-            best_bic, best_k, best_params = bic, k, params
+        # keep global best no matter what
+        if bic_k < best_bic:
+            best_bic, best_k, best_params = bic_k, k, best_params_k
 
-        # # early-stop if improvement tiny
-        # if prev_bic - bic < delta_min:
-        #     break
-        # prev_bic = bic
+        # early-stop if improvement tiny
+        if prev_bic - bic_k < delta_min:
+            break
+        prev_bic = bic_k
 
     return best_k, best_params
 
