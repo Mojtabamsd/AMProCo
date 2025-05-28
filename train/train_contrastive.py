@@ -1211,6 +1211,52 @@ def accuracy(output, target, topk=(1,)):
         return res
 
 
+import numpy as np
+
+def spherical_kmeans(X, k, max_iter=100, tol=1e-6):
+    """
+    Perform spherical k-means clustering.
+    X : [N, D] unit-norm data points
+    k : Number of clusters
+    max_iter : Maximum number of iterations
+    tol : Convergence tolerance
+    Returns:
+        centroids : [k, D] cluster centroids
+        labels : [N] cluster assignments
+    """
+    N, D = X.shape
+    rng = np.random.default_rng()
+
+    # Initialize centroids randomly
+    centroids = X[rng.choice(N, size=k, replace=False)]
+
+    for _ in range(max_iter):
+        # Compute cosine similarity and assign clusters
+        similarities = X @ centroids.T
+        labels = np.argmax(similarities, axis=1)
+
+        # Update centroids
+        new_centroids = np.zeros_like(centroids)
+        for i in range(k):
+            cluster_points = X[labels == i]
+            if len(cluster_points) > 0:
+                new_centroids[i] = np.mean(cluster_points, axis=0)
+                new_centroids[i] /= np.linalg.norm(new_centroids[i])  # Normalize to unit-norm
+
+        # Check for convergence
+        if np.linalg.norm(new_centroids - centroids) < tol:
+            break
+        centroids = new_centroids
+
+    return centroids, labels
+
+# Example usage for pre-initialization
+def initialize_with_spherical_kmeans(X, k):
+    centroids, labels = spherical_kmeans(X, k)
+    pi = np.array([np.sum(labels == i) / len(labels) for i in range(k)])
+    kappa = np.full(k, X.shape[1])  # Initialize kappa with dimensionality
+    return [(pi[j], centroids[j], kappa[j]) for j in range(k)]
+
 def cal_feats(model, train_loader, leaf_to_superclass_dict, config):
     superclass_feats = [[] for _ in range(20)]
     for i, data in enumerate(train_loader):
@@ -1277,7 +1323,9 @@ def select_vmf_k(
         # ---------- multiple EM restarts --------------------------------
         best_logL_k, best_params_k = -np.inf, None
         for _ in range(restarts):
-            params_try = fit_vmf_mixture(X, k)
+            # params_try = fit_vmf_mixture(X, k)
+            params_try = initialize_with_spherical_kmeans(X, k)
+
             logL_try   = _loglik_vmf(X, params_try)       # helper below
             if logL_try > best_logL_k:
                 best_logL_k, best_params_k = logL_try, params_try
