@@ -1295,7 +1295,7 @@ def select_vmf_k(
         params_k, _ = fit_vmf_mixture_newton(X, k, restarts=restarts)
 
         # optional single split–merge refinement
-        if use_split_merge and k > 1:
+        if use_split_merge and len(params_k) > 1:
             params_k = split_merge_once(X, params_k)
 
         # total log-likelihood
@@ -1435,7 +1435,17 @@ def fit_vmf_mixture_newton(X, k, max_iter=100, restarts=5, rng=np.random):
             best_logL = logL
             best_params = [(pi[j], mu[j], kappa[j]) for j in range(k)]
 
+    if best_params is None:  # never got a finite logL
+            # fall back to a single spherical component
+            mu0 = X.mean(axis=0)
+            mu0 /= np.linalg.norm(mu0) + 1e-32
+            kappa0 = X.shape[1]  # mild concentration
+            best_params = [(1.0, mu0, kappa0)]
+            best_logL = _loglik(X, best_params)
+
     return best_params, best_logL
+
+
 
 
 def _loglik(X, params):
