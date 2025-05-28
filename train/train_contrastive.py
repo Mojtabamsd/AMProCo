@@ -1468,12 +1468,11 @@ def select_vmf_k_advanced(X, k_max=5, criterion="BIC",
                 params, _ = annealed_em_once(X, k, tau, rng=rng)
             seed_pool.append(params)
 
-        # keep top-`restarts` seeds by logL and polish them
         scored = []
         for p in seed_pool:
-            _, logL = polish_em(X, p, max_iter=1)   # quick logL
-            scored.append((logL, p))
-        scored.sort(reverse=True)
+            _, quick_logL = polish_em(X, p, max_iter=1)
+            scored.append((quick_logL, p))
+        scored.sort(key=lambda tup: tup[0], reverse=True)
         best_polished = []
         for _, p0 in scored[:restarts]:
             p1, _ = polish_em(X, p0)
