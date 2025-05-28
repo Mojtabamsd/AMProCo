@@ -1362,15 +1362,29 @@ def log_vmf_pdf(X, mu, kappa):
 
 
 def angular_kmeans_pp_init(X, k, rng=np.random):
-    N, _ = X.shape
-    mu = np.zeros((k, X.shape[1]))
+    """
+    K-means++ seeding on the hypersphere using 1 - cosine distance.
+    Ensures probabilities are non-negative and non-zero.
+    """
+    N, D = X.shape
+    mu = np.zeros((k, D))
     mu[0] = X[rng.randint(N)]
+
     for m in range(1, k):
-        # angular distance = 1 − cosine
-        dist = 1.0 - np.max(X @ mu[:m].T, axis=1)
+        # cosine similarities to current centres
+        cos = np.clip(X @ mu[:m].T, -1.0, 1.0)           # <- clip here
+        dist = 1.0 - cos.max(axis=1)                     # 1 − cos ≥ 0
+
+        # guard against numerical negatives / all-zero vector
+        dist = np.where(dist < 0.0, 0.0, dist)
+        if dist.sum() < 1e-12:                           # all points identical
+            dist[:] = 1.0
         probs = dist / dist.sum()
+
         mu[m] = X[rng.choice(N, p=probs)]
+
     return mu
+
 
 
 def A_d(kappa, d):
