@@ -32,6 +32,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import numpy as np
 from tools.visualization import plot_tsne_from_validate
 from scipy.special import iv, logsumexp
+import numpy as np
 
 
 def train_contrastive(config_path, input_path, output_path):
@@ -1211,51 +1212,7 @@ def accuracy(output, target, topk=(1,)):
         return res
 
 
-import numpy as np
 
-def spherical_kmeans(X, k, max_iter=100, tol=1e-6):
-    """
-    Perform spherical k-means clustering.
-    X : [N, D] unit-norm data points
-    k : Number of clusters
-    max_iter : Maximum number of iterations
-    tol : Convergence tolerance
-    Returns:
-        centroids : [k, D] cluster centroids
-        labels : [N] cluster assignments
-    """
-    N, D = X.shape
-    rng = np.random.default_rng()
-
-    # Initialize centroids randomly
-    centroids = X[rng.choice(N, size=k, replace=False)]
-
-    for _ in range(max_iter):
-        # Compute cosine similarity and assign clusters
-        similarities = X @ centroids.T
-        labels = np.argmax(similarities, axis=1)
-
-        # Update centroids
-        new_centroids = np.zeros_like(centroids)
-        for i in range(k):
-            cluster_points = X[labels == i]
-            if len(cluster_points) > 0:
-                new_centroids[i] = np.mean(cluster_points, axis=0)
-                new_centroids[i] /= np.linalg.norm(new_centroids[i])  # Normalize to unit-norm
-
-        # Check for convergence
-        if np.linalg.norm(new_centroids - centroids) < tol:
-            break
-        centroids = new_centroids
-
-    return centroids, labels
-
-# Example usage for pre-initialization
-def initialize_with_spherical_kmeans(X, k):
-    centroids, labels = spherical_kmeans(X, k)
-    pi = np.array([np.sum(labels == i) / len(labels) for i in range(k)])
-    kappa = np.full(k, X.shape[1])  # Initialize kappa with dimensionality
-    return [(pi[j], centroids[j], kappa[j]) for j in range(k)]
 
 def cal_feats(model, train_loader, leaf_to_superclass_dict, config):
     superclass_feats = [[] for _ in range(20)]
@@ -1305,14 +1262,28 @@ def _loglik_vmf(X, params):
 def select_vmf_k(
         X,
         k_max      = 5,
-        criterion  = "BIC",   #  "AIC", "BIC", or "ICL"
-        restarts   = 5,
-        delta_stop = 10.0
+        criterion  = "BIC",   # "AIC", "BIC", or "ICL"
+        restarts   = 5,       # EM restarts for every k
+        delta_stop = 5.0,     # early-stop threshold on score improvement
+        use_split_merge = True
     ):
     """
-    X         : [N,D] unit-norm features of one superclass
-    criterion : which score to minimise: 'AIC', 'BIC', or 'ICL'
-    returns   : best_k, best_params
+    Choose the number of vMF components via AIC/BIC/ICL.
+
+    Parameters
+    ----------
+    X              : ndarray, shape (N, D)
+                     Unit-normalised feature vectors for one superclass.
+    k_max, criterion, restarts, delta_stop
+                     As described above.
+    use_split_merge: bool
+                     If True, run a single split–merge move after EM
+                     to escape local optima.
+
+    Returns
+    -------
+    best_k         : int
+    best_params    : list [(pi_j, mu_j, kappa_j)]  length = best_k
     """
     N, D = X.shape
     best_k, best_score, best_params = 1, np.inf, None
@@ -1320,37 +1291,39 @@ def select_vmf_k(
 
     for k in range(1, k_max + 1):
 
-        # ---------- multiple EM restarts --------------------------------
-        best_logL_k, best_params_k = -np.inf, None
-        for _ in range(restarts):
-            # params_try = fit_vmf_mixture(X, k)
-            params_try = initialize_with_spherical_kmeans(X, k)
+        # ----------- EM with Newton-refined kappa ---------------------
+        params_k, _ = fit_vmf_mixture_newton(X, k, restarts=restarts)
 
-            logL_try   = _loglik_vmf(X, params_try)       # helper below
-            if logL_try > best_logL_k:
-                best_logL_k, best_params_k = logL_try, params_try
+        # optional single split–merge refinement
+        if use_split_merge and k > 1:
+            params_k = split_merge_once(X, params_k)
 
-        # ---------- information criteria --------------------------------
-        p_free = k * (D - 1 + 1) + (k - 1)          # µ (D-1), κ (1), π (k-1)
+        # total log-likelihood
+        logL_k = _loglik(X, params_k)
+
+        # degrees of freedom: (d-1) + 1 for each component, plus (k-1) weights
+        p_free = k * D + (k - 1) - k         # = k(D-1+1) + (k-1)
+
+        # information criterion
         if criterion.upper() == "AIC":
-            score = -2.0 * best_logL_k + 2 * p_free
-        else:
-            score = -2.0 * best_logL_k + p_free * np.log(N)   # BIC term
+            score_k = -2 * logL_k + 2 * p_free
+        else:                                 # BIC or ICL
+            score_k = -2 * logL_k + p_free * np.log(N)
             if criterion.upper() == "ICL":
-                # subtract 2 * cluster-entropy term
-                _, _, h = _posterior_and_entropy(X, best_params_k)
-                score += 2.0 * h
+                _, _, entropy_k = _posterior_and_entropy(X, params_k)
+                score_k += 2 * entropy_k     # ICL = BIC + 2·entropy
 
-        # ---------- keep the global minimum -----------------------------
-        if score < best_score:
-            best_k, best_score, best_params = k, score, best_params_k
+        # keep global minimum
+        if score_k < best_score:
+            best_k, best_score, best_params = k, score_k, params_k
 
-        # ---------- optional early-stop ---------------------------------
-        if prev_score - score < delta_stop:
+        # early-stop if improvement tiny
+        if prev_score - score_k < delta_stop:
             break
-        prev_score = score
+        prev_score = score_k
 
     return best_k, best_params
+
 
 def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     p_star = []
@@ -1371,59 +1344,155 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     return p_star, mixture_params
 
 
-def fit_vmf_mixture(X, k, max_iter=50):
-    """
-    X : [N, D] (unit vectors)
-    Returns list [(pi_j, mu_j, kappa_j)] length k
-    """
-    N, D = X.shape
-    # ----- initialisation -------------------------------------------------
-    rng = np.random.default_rng()
-    mu = X[rng.choice(N, size=k, replace=False)]           # K-means++ style
-    kappa = np.full(k, D, dtype=np.float64)
-    pi = np.full(k, 1.0 / k, dtype=np.float64)
-
-    for _ in range(max_iter):
-        # ---------- E-step ----------------------------------------------
-        log_priors = np.log(pi + 1e-32)                    # [K]
-        log_prob = log_vmf_pdf(X, mu, kappa) + log_priors  # [N, K]
-        log_resps = log_prob - logsumexp(log_prob, axis=1, keepdims=True)
-        R = np.exp(log_resps)                              # [N, K]
-
-        # ---------- M-step ----------------------------------------------
-        Nj = R.sum(axis=0) + 1e-12                         # [K]
-        pi = Nj / N
-
-        # update mu and kappa component-wise
-        weighted_sum = R.T @ X                             # [K, D]
-        mu_norm = np.linalg.norm(weighted_sum, axis=1, keepdims=True) + 1e-32
-        mu = weighted_sum / mu_norm                       # [K, D]
-
-        R_bar = (mu_norm.squeeze() / Nj).clip(1e-6, 1 - 1e-6)
-        kappa = (R_bar * (D - R_bar**2)) / (1 - R_bar**2)  # approximation
-
-    return [(pi[j], mu[j], kappa[j]) for j in range(k)]
 
 
 def log_c_p(kappa, dim):
-    """
-    log of the vMF normalisation constant C_d(kappa) =
-    kappa^{d/2-1} / [(2π)^{d/2} I_{d/2-1}(kappa)]
-    """
-    # Use log-form to avoid overflow/underflow
+    """log C_d(κ) normaliser."""
     nu = dim / 2.0 - 1.0
-    log_iv = np.log(iv(nu, kappa) + 1e-300)
-    return (nu * np.log(kappa + 1e-16)) - (dim / 2.0) * np.log(2 * np.pi) - log_iv
+    return (
+        nu * np.log(kappa + 1e-16)
+        - (dim / 2.0) * np.log(2 * np.pi)
+        - np.log(iv(nu, kappa) + 1e-300)
+    )
 
 
-def log_vmf_pdf(x, mu, kappa):
-    """
-    x : [N, D]  (unit-norm)
-    mu: [K, D]  (unit-norm)
-    kappa: [K]  (>=0)
-    returns log p(x|mu,kappa)   shape [N, K]
-    """
-    # cosine similarity matrix  [N, K]
-    cos = x @ mu.T
-    log_norm = log_c_p(kappa, x.shape[1])          # [K]
-    return cos * kappa[None, :] + log_norm[None, :]
+def log_vmf_pdf(X, mu, kappa):
+    """log p(X|μ,κ) for all N×K pairs."""
+    return X @ mu.T * kappa + log_c_p(kappa, X.shape[1])[None, :]
+
+
+def angular_kmeans_pp_init(X, k, rng=np.random):
+    N, _ = X.shape
+    mu = np.zeros((k, X.shape[1]))
+    mu[0] = X[rng.randint(N)]
+    for m in range(1, k):
+        # angular distance = 1 − cosine
+        dist = 1.0 - np.max(X @ mu[:m].T, axis=1)
+        probs = dist / dist.sum()
+        mu[m] = X[rng.choice(N, p=probs)]
+    return mu
+
+
+def A_d(kappa, d):
+    return iv(d / 2.0, kappa) / iv(d / 2.0 - 1.0, kappa)
+
+
+def newton_kappa(r_bar, d, kappa_0, iters=3):
+    kappa = max(kappa_0, 1e-3)
+    for _ in range(iters):
+        a = A_d(kappa, d)
+        kappa -= (a - r_bar) / (1 - a**2 - (d - 1) / kappa * a + 1e-12)
+        kappa = np.clip(kappa, 1e-3, 1e6)
+    return kappa
+
+
+def fit_vmf_mixture_newton(X, k, max_iter=100, restarts=5, rng=np.random):
+    N, D = X.shape
+    best_logL, best_params = -np.inf, None
+
+    for _ in range(restarts):
+        mu = angular_kmeans_pp_init(X, k, rng)
+        kappa = np.full(k, D, dtype=float)
+        pi = np.full(k, 1.0 / k, dtype=float)
+
+        for _ in range(max_iter):
+            # ------- E-step
+            log_prob = log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32)
+            log_r = log_prob - logsumexp(log_prob, axis=1, keepdims=True)
+            R = np.exp(log_r)
+            Nj = R.sum(0) + 1e-12
+            pi = Nj / N
+
+            # ------- M-step: μ
+            weighted = R.T @ X
+            mu_norm = np.linalg.norm(weighted, axis=1, keepdims=True) + 1e-32
+            mu = weighted / mu_norm
+
+            # ------- M-step: κ with Newton refinement
+            r_bar = (mu_norm.squeeze() / Nj).clip(1e-6, 1 - 1e-6)
+            for j in range(k):
+                kappa[j] = newton_kappa(r_bar[j], D, kappa[j])
+
+        # total log-likelihood
+        logL = logsumexp(
+            log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32), axis=1
+        ).sum()
+        if logL > best_logL:
+            best_logL = logL
+            best_params = [(pi[j], mu[j], kappa[j]) for j in range(k)]
+
+    return best_params, best_logL
+
+
+def _loglik(X, params):
+    pi = np.array([p[0] for p in params])
+    mu = np.stack([p[1] for p in params])
+    kappa = np.array([p[2] for p in params])
+    return logsumexp(
+        log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32), axis=1
+    ).sum()
+
+
+def split_merge_once(X, params, rng=np.random):
+    """Return params after whichever (split or merge) improves logL most."""
+    pi = np.array([p[0] for p in params])
+    mu = np.stack([p[1] for p in params])
+    kappa = np.array([p[2] for p in params])
+    k = len(params)
+    N, D = X.shape
+
+    # responsibilities
+    log_prob = log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32)
+    log_r = log_prob - logsumexp(log_prob, axis=1, keepdims=True)
+    R = np.exp(log_r)
+    Nj = R.sum(0)
+
+    # ---------- split: component with max Nj
+    j_split = Nj.argmax()
+    # simple orthogonal perturbation
+    v = rng.normal(size=D)
+    v -= v.dot(mu[j_split]) * mu[j_split]
+    v /= np.linalg.norm(v) + 1e-12
+
+    mu_split = np.vstack(
+        [mu, mu[j_split] + 0.1 * v, mu[j_split] - 0.1 * v]
+    )
+    mu_split[-2:] /= np.linalg.norm(mu_split[-2:], axis=1, keepdims=True)
+    kappa_split = np.append(kappa, [kappa[j_split] / 2, kappa[j_split] / 2])
+    pi_split = np.append(pi * 0.999, [0.0005, 0.0005])
+    pi_split[j_split] -= 0.001
+    pi_split /= pi_split.sum()
+
+    split_params, logL_split = fit_vmf_mixture_newton(
+        X, k + 1, max_iter=60, restarts=1, rng=rng
+    )
+
+    # ---------- merge: closest pair in angle
+    cos = mu @ mu.T
+    np.fill_diagonal(cos, -1)
+    i, j = np.unravel_index(cos.argmax(), cos.shape)
+    pi_m = pi[i] + pi[j]
+    mu_m = (pi[i] * mu[i] + pi[j] * mu[j]) / pi_m
+    mu_m /= np.linalg.norm(mu_m)
+    kappa_m = (kappa[i] + kappa[j]) / 2
+
+    keep = [idx for idx in range(k) if idx not in (i, j)]
+    pi_merge = np.append(pi[keep], pi_m)
+    mu_merge = np.vstack([mu[keep], mu_m])
+    kappa_merge = np.append(kappa[keep], kappa_m)
+    pi_merge /= pi_merge.sum()
+
+    merge_params = [
+        (pi_merge[idx], mu_merge[idx], kappa_merge[idx])
+        for idx in range(k - 1)
+    ]
+    logL_merge = _loglik(X, merge_params)
+
+    # ---------- select best
+    logL_orig = _loglik(X, params)
+    if logL_split > max(logL_merge, logL_orig):
+        return split_params
+    elif logL_merge > logL_orig:
+        return merge_params
+    else:
+        return params
