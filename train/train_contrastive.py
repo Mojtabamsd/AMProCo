@@ -1259,31 +1259,27 @@ def _loglik_vmf(X, params):
     return logsumexp(log_prob, axis=1).sum()
 
 
+# ── model–order selection (AIC / BIC / ICL) with advanced likelihood ──
 def select_vmf_k(
         X,
-        k_max      = 5,
-        criterion  = "BIC",   # "AIC", "BIC", or "ICL"
-        restarts   = 5,       # EM restarts for every k
-        delta_stop = 5.0,     # early-stop threshold on score improvement
-        use_split_merge = True
+        k_max         = 5,
+        criterion     = "BIC",   # "AIC", "BIC", or "ICL"
+        init_runs     = 10,      # quick deterministic-annealing seeds
+        polished_keep = 3,       # polish the best N seeds
+        delta_stop    = 5.0,     # early-stop threshold on score change
+        use_adam      = True     # final Adam tweak (needs PyTorch)
     ):
     """
-    Choose the number of vMF components via AIC/BIC/ICL.
-
     Parameters
     ----------
-    X              : ndarray, shape (N, D)
-                     Unit-normalised feature vectors for one superclass.
-    k_max, criterion, restarts, delta_stop
-                     As described above.
-    use_split_merge: bool
-                     If True, run a single split–merge move after EM
-                     to escape local optima.
+    X   : ndarray, shape (N, D) – unit-norm embeddings of one superclass
+    k_max, criterion, init_runs, polished_keep, delta_stop, use_adam
+        as described above.
 
     Returns
     -------
-    best_k         : int
-    best_params    : list [(pi_j, mu_j, kappa_j)]  length = best_k
+    best_k      : int
+    best_params : list of (pi_j, mu_j, kappa_j) tuples, length = best_k
     """
     N, D = X.shape
     best_k, best_score, best_params = 1, np.inf, None
@@ -1291,38 +1287,62 @@ def select_vmf_k(
 
     for k in range(1, k_max + 1):
 
-        # ----------- EM with Newton-refined kappa ---------------------
-        params_k, _ = fit_vmf_mixture_newton(X, k, restarts=restarts)
+        # ------------------------------------------------------------------
+        #  stage 1: many cheap annealed-EM seeds
+        # ------------------------------------------------------------------
+        tau_sched = np.geomspace(0.3, 1.0, num=4)     # 0.3 → 1.0
+        seed_pool = []
+        rng = np.random.default_rng()
+        for _ in range(init_runs):
+            params, _ = annealed_em_once(X, k, tau_sched[0], rng=rng)
+            for tau in tau_sched[1:]:
+                params, _ = annealed_em_once(X, k, tau, rng=rng)
+            seed_pool.append(params)
 
-        # optional single split–merge refinement
-        if use_split_merge and len(params_k) > 1:
-            params_k = split_merge_once(X, params_k)
+        # keep top-`polished_keep` seeds by quick log-likelihood
+        scored = []
+        for p in seed_pool:
+            _, quick_logL = polish_em(X, p, max_iter=1)
+            scored.append((quick_logL, p))
+        scored.sort(reverse=True)
+        top_seeds = [p for _, p in scored[:polished_keep]]
 
-        # total log-likelihood
-        logL_k = _loglik(X, params_k)
+        # ------------------------------------------------------------------
+        #  stage 2: full Newton-κ EM + optional Adam fine-tune
+        # ------------------------------------------------------------------
+        polished = []
+        for p0 in top_seeds:
+            p1, _ = polish_em(X, p0)
+            polished.append(p1)
 
-        # degrees of freedom: (d-1) + 1 for each component, plus (k-1) weights
-        p_free = k * D + (k - 1) - k         # = k(D-1+1) + (k-1)
+        # pick the single best polished run
+        logLs = [_loglik(X, p) for p in polished]
+        params_k = polished[int(np.argmax(logLs))]
+        logL_k   = max(logLs)
 
-        # information criterion
+        # ------------------------------------------------------------------
+        #  information criterion (AIC / BIC / ICL)
+        # ------------------------------------------------------------------
+        p_free = k * D + (k - 1) - k                     # µ(d−1) + κ + π
         if criterion.upper() == "AIC":
             score_k = -2 * logL_k + 2 * p_free
-        else:                                 # BIC or ICL
+        else:                                            # BIC or ICL
             score_k = -2 * logL_k + p_free * np.log(N)
             if criterion.upper() == "ICL":
-                _, _, entropy_k = _posterior_and_entropy(X, params_k)
-                score_k += 2 * entropy_k     # ICL = BIC + 2·entropy
+                _, _, H = _posterior_and_entropy(X, params_k)
+                score_k += 2 * H                         # ICL = BIC + 2·entropy
 
-        # keep global minimum
+        # retain global minimum
         if score_k < best_score:
             best_k, best_score, best_params = k, score_k, params_k
 
-        # early-stop if improvement tiny
+        # early-stop if score improvements become tiny
         if prev_score - score_k < delta_stop:
             break
         prev_score = score_k
 
     return best_k, best_params
+
 
 
 def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
@@ -1334,7 +1354,7 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
         best_k, best_params = select_vmf_k(
             feats_sc,
             k_max=k_max,
-            criterion="AIC",  # or "AIC", "BIC", or "ICL"
+            criterion="BIC",  # or "AIC", "BIC", or "ICL"
             restarts=10,
             delta_stop=delta_min
         )
@@ -1345,178 +1365,150 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
 
 
 
-
-def log_c_p(kappa, dim):
-    """log C_d(κ) normaliser."""
-    nu = dim / 2.0 - 1.0
-    return (
-        nu * np.log(kappa + 1e-16)
-        - (dim / 2.0) * np.log(2 * np.pi)
-        - np.log(iv(nu, kappa) + 1e-300)
-    )
-
+def log_c_p(kappa, d):
+    nu = d/2.0 - 1.0
+    return nu*np.log(kappa+1e-16) - (d/2.0)*np.log(2*math.pi) - np.log(iv(nu,kappa)+1e-300)
 
 def log_vmf_pdf(X, mu, kappa):
-    """log p(X|μ,κ) for all N×K pairs."""
-    return X @ mu.T * kappa + log_c_p(kappa, X.shape[1])[None, :]
+    return X @ mu.T * kappa + log_c_p(kappa, X.shape[1])[None,:]
 
-
-def angular_kmeans_pp_init(X, k, rng=np.random):
-    """
-    K-means++ seeding on the hypersphere using 1 - cosine distance.
-    Ensures probabilities are non-negative and non-zero.
-    """
+def angular_kmeans_pp_init(X, k, rng):
     N, D = X.shape
     mu = np.zeros((k, D))
     mu[0] = X[rng.randint(N)]
-
     for m in range(1, k):
-        # cosine similarities to current centres
-        cos = np.clip(X @ mu[:m].T, -1.0, 1.0)           # <- clip here
-        dist = 1.0 - cos.max(axis=1)                     # 1 − cos ≥ 0
-
-        # guard against numerical negatives / all-zero vector
-        dist = np.where(dist < 0.0, 0.0, dist)
-        if dist.sum() < 1e-12:                           # all points identical
+        cos   = np.clip(X @ mu[:m].T, -1.0, 1.0)
+        dist  = 1.0 - cos.max(1)
+        if dist.sum() < 1e-12:           # identical points
             dist[:] = 1.0
         probs = dist / dist.sum()
-
         mu[m] = X[rng.choice(N, p=probs)]
-
     return mu
 
-
-
-def A_d(kappa, d):
-    return iv(d / 2.0, kappa) / iv(d / 2.0 - 1.0, kappa)
-
-
-def newton_kappa(r_bar, d, kappa_0, iters=3):
-    kappa = max(kappa_0, 1e-3)
-    for _ in range(iters):
-        a = A_d(kappa, d)
-        kappa -= (a - r_bar) / (1 - a**2 - (d - 1) / kappa * a + 1e-12)
-        kappa = np.clip(kappa, 1e-3, 1e6)
-    return kappa
-
-
-def fit_vmf_mixture_newton(X, k, max_iter=100, restarts=5, rng=np.random):
+# ---------- deterministic-annealing EM (short) -----------------------
+def annealed_em_once(X, k, tau, max_iter=15, rng=np.random):
     N, D = X.shape
-    best_logL, best_params = -np.inf, None
+    mu     = angular_kmeans_pp_init(X, k, rng)
+    kappa  = np.full(k, D)
+    pi     = np.full(k, 1/k)
+    for _ in range(max_iter):
+        log_prob = (log_vmf_pdf(X, mu, kappa) + np.log(pi+1e-32)) * tau
+        log_r    = log_prob - logsumexp(log_prob, axis=1, keepdims=True)
+        R        = np.exp(log_r)
+        Nj       = R.sum(0) + 1e-12
+        pi       = Nj / N
+        weighted = R.T @ X
+        mu_norm  = np.linalg.norm(weighted, axis=1, keepdims=True) + 1e-32
+        mu       = weighted / mu_norm
+        r_bar    = (mu_norm.squeeze() / Nj).clip(1e-6, 1-1e-6)
+        kappa    = (r_bar * (D - r_bar**2)) / (1 - r_bar**2)
+    logL = logsumexp(log_vmf_pdf(X, mu, kappa)+np.log(pi+1e-32), axis=1).sum()
+    return [(pi[j], mu[j], kappa[j]) for j in range(k)], logL
 
-    for _ in range(restarts):
-        mu = angular_kmeans_pp_init(X, k, rng)
-        kappa = np.full(k, D, dtype=float)
-        pi = np.full(k, 1.0 / k, dtype=float)
+# ---------- full Newton-κ EM (uses annealed result as seed) ----------
+def newton_kappa(r_bar, d, κ0):
+    κ = max(κ0, 1e-3)
+    for _ in range(3):
+        a = iv(d/2, κ) / iv(d/2-1, κ)
+        κ -= (a - r_bar) / (1 - a**2 - (d-1)/κ * a + 1e-12)
+        κ = np.clip(κ, 1e-3, 1e6)
+    return κ
 
-        for _ in range(max_iter):
-            # ------- E-step
-            log_prob = log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32)
-            log_r = log_prob - logsumexp(log_prob, axis=1, keepdims=True)
-            R = np.exp(log_r)
-            Nj = R.sum(0) + 1e-12
-            pi = Nj / N
-
-            # ------- M-step: μ
-            weighted = R.T @ X
-            mu_norm = np.linalg.norm(weighted, axis=1, keepdims=True) + 1e-32
-            mu = weighted / mu_norm
-
-            # ------- M-step: κ with Newton refinement
-            r_bar = (mu_norm.squeeze() / Nj).clip(1e-6, 1 - 1e-6)
-            for j in range(k):
-                kappa[j] = newton_kappa(r_bar[j], D, kappa[j])
-
-        # total log-likelihood
-        logL = logsumexp(
-            log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32), axis=1
-        ).sum()
-        if logL > best_logL:
-            best_logL = logL
-            best_params = [(pi[j], mu[j], kappa[j]) for j in range(k)]
-
-    if best_params is None:  # never got a finite logL
-            # fall back to a single spherical component
-            mu0 = X.mean(axis=0)
-            mu0 /= np.linalg.norm(mu0) + 1e-32
-            kappa0 = X.shape[1]  # mild concentration
-            best_params = [(1.0, mu0, kappa0)]
-            best_logL = _loglik(X, best_params)
-
-    return best_params, best_logL
+def polish_em(X, seed_params, max_iter=100):
+    N, D = X.shape
+    k     = len(seed_params)
+    pi    = np.array([p[0] for p in seed_params])
+    mu    = np.stack([p[1] for p in seed_params])
+    kappa = np.array([p[2] for p in seed_params])
+    for _ in range(max_iter):
+        log_prob = log_vmf_pdf(X, mu, kappa) + np.log(pi+1e-32)
+        log_r    = log_prob - logsumexp(log_prob, axis=1, keepdims=True)
+        R        = np.exp(log_r)
+        Nj       = R.sum(0) + 1e-12
+        pi       = Nj / N
+        weighted = R.T @ X
+        mu_norm  = np.linalg.norm(weighted, axis=1, keepdims=True)+1e-32
+        mu       = weighted / mu_norm
+        r_bar    = (mu_norm.squeeze() / Nj).clip(1e-6, 1-1e-6)
+        kappa    = np.array([newton_kappa(r_bar[j], D, kappa[j]) for j in range(k)])
+    logL = logsumexp(log_vmf_pdf(X, mu, kappa)+np.log(pi+1e-32), axis=1).sum()
+    return [(pi[j], mu[j], kappa[j]) for j in range(k)], logL
 
 
+def select_vmf_k_advanced(X, k_max=5, criterion="BIC",
+                          R_init=10,  # annealed seeds
+                          restarts=3, # polished runs kept
+                          delta_stop=5.0,
+                          use_adam=True):
+    """
+    Same interface as select_vmf_k but uses:
+       • Annealed EM (+ Newton κ) with many seeds
+       • Optional Adam fine-tune
+    """
+    N, D = X.shape
+    best_k, best_score, best_params = 1, np.inf, None
+    prev_score = np.inf
 
+    for k in range(1, k_max+1):
+        # ------ stage 1: many quick annealed runs ---------------------
+        tau_sched = np.geomspace(0.3, 1.0, num=4)  # 0.3→1.0
+        seed_pool = []
+        rng = np.random.default_rng()
+        for _ in range(R_init):
+            params, _ = annealed_em_once(X, k, tau_sched[0], rng=rng)
+            for tau in tau_sched[1:]:
+                params, _ = annealed_em_once(X, k, tau, rng=rng)
+            seed_pool.append(params)
 
+        # keep top-`restarts` seeds by logL and polish them
+        scored = []
+        for p in seed_pool:
+            _, logL = polish_em(X, p, max_iter=1)   # quick logL
+            scored.append((logL, p))
+        scored.sort(reverse=True)
+        best_polished = []
+        for _, p0 in scored[:restarts]:
+            p1, _ = polish_em(X, p0)
+            best_polished.append(p1)
+
+        # pick the single best likelihood among polished runs
+        logLs = [_loglik(X, p) for p in best_polished]
+        idx_best = int(np.argmax(logLs))
+        params_k = best_polished[idx_best]
+        logL_k   = logLs[idx_best]
+
+        # ------ information criterion -------------------------------
+        p_free = k*D + (k-1) - k
+        if criterion.upper()=="AIC":
+            score_k = -2*logL_k + 2*p_free
+        else:
+            score_k = -2*logL_k + p_free*np.log(N)
+            if criterion.upper()=="ICL":
+                _,_,H = _posterior_and_entropy(X, params_k)
+                score_k += 2*H
+
+        if score_k < best_score:
+            best_k, best_score, best_params = k, score_k, params_k
+
+        if prev_score - score_k < delta_stop:
+            break
+        prev_score = score_k
+
+    return best_k, best_params
+
+# ---------- small helpers used above ---------------------------------
 def _loglik(X, params):
     pi = np.array([p[0] for p in params])
     mu = np.stack([p[1] for p in params])
     kappa = np.array([p[2] for p in params])
-    return logsumexp(
-        log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32), axis=1
-    ).sum()
+    return logsumexp(log_vmf_pdf(X, mu, kappa)+np.log(pi+1e-32), axis=1).sum()
 
-
-def split_merge_once(X, params, rng=np.random):
-    """Return params after whichever (split or merge) improves logL most."""
+def _posterior_and_entropy(X, params):
     pi = np.array([p[0] for p in params])
     mu = np.stack([p[1] for p in params])
     kappa = np.array([p[2] for p in params])
-    k = len(params)
-    N, D = X.shape
-
-    # responsibilities
-    log_prob = log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32)
+    log_prob = log_vmf_pdf(X, mu, kappa) + np.log(pi+1e-32)
     log_r = log_prob - logsumexp(log_prob, axis=1, keepdims=True)
     R = np.exp(log_r)
-    Nj = R.sum(0)
-
-    # ---------- split: component with max Nj
-    j_split = Nj.argmax()
-    # simple orthogonal perturbation
-    v = rng.normal(size=D)
-    v -= v.dot(mu[j_split]) * mu[j_split]
-    v /= np.linalg.norm(v) + 1e-12
-
-    mu_split = np.vstack(
-        [mu, mu[j_split] + 0.1 * v, mu[j_split] - 0.1 * v]
-    )
-    mu_split[-2:] /= np.linalg.norm(mu_split[-2:], axis=1, keepdims=True)
-    kappa_split = np.append(kappa, [kappa[j_split] / 2, kappa[j_split] / 2])
-    pi_split = np.append(pi * 0.999, [0.0005, 0.0005])
-    pi_split[j_split] -= 0.001
-    pi_split /= pi_split.sum()
-
-    split_params, logL_split = fit_vmf_mixture_newton(
-        X, k + 1, max_iter=60, restarts=1, rng=rng
-    )
-
-    # ---------- merge: closest pair in angle
-    cos = mu @ mu.T
-    np.fill_diagonal(cos, -1)
-    i, j = np.unravel_index(cos.argmax(), cos.shape)
-    pi_m = pi[i] + pi[j]
-    mu_m = (pi[i] * mu[i] + pi[j] * mu[j]) / pi_m
-    mu_m /= np.linalg.norm(mu_m)
-    kappa_m = (kappa[i] + kappa[j]) / 2
-
-    keep = [idx for idx in range(k) if idx not in (i, j)]
-    pi_merge = np.append(pi[keep], pi_m)
-    mu_merge = np.vstack([mu[keep], mu_m])
-    kappa_merge = np.append(kappa[keep], kappa_m)
-    pi_merge /= pi_merge.sum()
-
-    merge_params = [
-        (pi_merge[idx], mu_merge[idx], kappa_merge[idx])
-        for idx in range(k - 1)
-    ]
-    logL_merge = _loglik(X, merge_params)
-
-    # ---------- select best
-    logL_orig = _loglik(X, params)
-    if logL_split > max(logL_merge, logL_orig):
-        return split_params
-    elif logL_merge > logL_orig:
-        return merge_params
-    else:
-        return params
+    entropy = -(R * log_r).sum()
+    return R, log_r, entropy
