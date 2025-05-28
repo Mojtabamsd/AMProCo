@@ -1372,18 +1372,26 @@ def log_c_p(kappa, d):
 def log_vmf_pdf(X, mu, kappa):
     return X @ mu.T * kappa + log_c_p(kappa, X.shape[1])[None,:]
 
-def angular_kmeans_pp_init(X, k, rng):
+def angular_kmeans_pp_init(X, k, rng=np.random.default_rng()):
+    """
+    K-means++ seeding on the hypersphere using 1 – cosine distance.
+    """
     N, D = X.shape
-    mu = np.zeros((k, D))
-    mu[0] = X[rng.randint(N)]
+    mu = np.zeros((k, D), dtype=X.dtype)
+
+    # first centre
+    mu[0] = X[rng.integers(N)]          #  ← use .integers, not .randint
+
     for m in range(1, k):
         cos   = np.clip(X @ mu[:m].T, -1.0, 1.0)
-        dist  = 1.0 - cos.max(1)
-        if dist.sum() < 1e-12:           # identical points
+        dist  = 1.0 - cos.max(axis=1)
+        if dist.sum() < 1e-12:          # all points identical
             dist[:] = 1.0
         probs = dist / dist.sum()
         mu[m] = X[rng.choice(N, p=probs)]
+
     return mu
+
 
 # ---------- deterministic-annealing EM (short) -----------------------
 def annealed_em_once(X, k, tau, max_iter=15, rng=np.random):
