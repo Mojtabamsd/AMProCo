@@ -818,10 +818,13 @@ def train_cifar(rank, world_size, config, console):
                         new_proco_loss.estimator.Ave[node_id] = torch.from_numpy(mu_j).to(device)
                         new_proco_loss.estimator.kappa[node_id] = torch.tensor(kappa_j, device=device)
 
-                        superclass_size = len(superclass_feats[sc_idx])
-                        pseudo = max(int(pi_j * superclass_size), 50)  # at least 50 counts
-                        new_proco_loss.estimator.Amount[node_id] = pseudo
+                        new_proco_loss.estimator.freeze_updates = True
+                        new_proco_loss.estimator_old.freeze_updates = True
 
+            freeze_epochs = 20
+            if epoch == config.training_contrastive.twostage_epoch + freeze_epochs:
+                new_proco_loss.estimator.freeze_updates = False
+                new_proco_loss.estimator_old.freeze_updates = False
 
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl,
                                                     optimizer, config, console)

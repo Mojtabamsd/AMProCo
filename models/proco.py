@@ -117,6 +117,7 @@ class EstimatorCV():
         self.Amount = self.Amount.to(self.device)
         self.kappa = self.kappa.to(self.device)
         self.logc = self.logc.to(self.device)
+        self.freeze_updates = False
 
     def reset(self):
         device = self.Ave.device  # Get the device from the attribute
@@ -181,6 +182,8 @@ class EstimatorCV():
         self.Amount += onehot.sum(0)
 
     def update_CV(self, features, labels):
+        if self.freeze_updates:
+            return
         device = features.device
         self.Ave = self.Ave.to(device)
         self.Amount = self.Amount.to(device)
