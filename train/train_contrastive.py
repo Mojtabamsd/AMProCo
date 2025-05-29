@@ -821,7 +821,7 @@ def train_cifar(rank, world_size, config, console):
                         new_proco_loss.estimator.freeze_updates = True
                         new_proco_loss.estimator_old.freeze_updates = True
 
-            freeze_epochs = 20
+            freeze_epochs = 60
             if epoch == config.training_contrastive.twostage_epoch + freeze_epochs:
                 new_proco_loss.estimator.freeze_updates = False
                 new_proco_loss.estimator_old.freeze_updates = False
