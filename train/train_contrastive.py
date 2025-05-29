@@ -807,19 +807,19 @@ def train_cifar(rank, world_size, config, console):
                     leaf_path_map=leaf_path_map,
                     num_nodes=num_nodes).to(device)
 
-                for sc_idx in range(config.training_contrastive.superclass_num):
-                    p_i = p_star[sc_idx]
-                    proto_list = superclass_to_protos[sc_idx]
-                    for j in range(p_i):
-                        node_id = proto_list[j]
-                        (pi_j, mu_j, kappa_j) = mixture_params[sc_idx][j]
-                        # mu_j is a numpy array of shape [feature_dim]
-                        # ensure it's normalized
-                        mu_j = mu_j / (np.linalg.norm(mu_j) + 1e-12)
-                        # set them in the Estimator
-                        new_proco_loss.estimator.Ave[node_id] = torch.from_numpy(mu_j).to(device)
-                        new_proco_loss.estimator.kappa[node_id] = torch.tensor(kappa_j, device=device)
-                        # logC can be updated or left to be updated in next iteration (update_kappa).
+                # for sc_idx in range(config.training_contrastive.superclass_num):
+                #     p_i = p_star[sc_idx]
+                #     proto_list = superclass_to_protos[sc_idx]
+                #     for j in range(p_i):
+                #         node_id = proto_list[j]
+                #         (pi_j, mu_j, kappa_j) = mixture_params[sc_idx][j]
+                #         # mu_j is a numpy array of shape [feature_dim]
+                #         # ensure it's normalized
+                #         mu_j = mu_j / (np.linalg.norm(mu_j) + 1e-12)
+                #         # set them in the Estimator
+                #         new_proco_loss.estimator.Ave[node_id] = torch.from_numpy(mu_j).to(device)
+                #         new_proco_loss.estimator.kappa[node_id] = torch.tensor(kappa_j, device=device)
+                #         # logC can be updated or left to be updated in next iteration (update_kappa).
 
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl,
                                                     optimizer, config, console)
