@@ -801,12 +801,7 @@ def train_cifar(rank, world_size, config, console):
                                            num_classes=num_nodes,
                                            device=device)
 
-                new_criterion_scl = HierarchicalProCoWrapper(
-                    proco_loss=new_proco_loss,
-                    leaf_node_ids=leaf_node_ids,
-                    leaf_path_map=leaf_path_map,
-                    num_nodes=num_nodes).to(device)
-
+                log_prior = torch.zeros(num_nodes, device=device)
                 for sc_idx in range(config.training_contrastive.superclass_num):
                     p_i = p_star[sc_idx]
                     proto_list = superclass_to_protos[sc_idx]
@@ -820,9 +815,16 @@ def train_cifar(rank, world_size, config, console):
 
                         superclass_size = len(superclass_feats[sc_idx])
                         pseudo = max(int(pi_j * superclass_size), 50)
-                        inflated = pseudo * 20
 
-                        new_proco_loss.estimator.Amount[node_id] = inflated
+                        new_proco_loss.estimator.Amount[node_id] = pseudo
+                        log_prior[node_id] = math.log(pi_j + 1e-32)
+
+                new_criterion_scl = HierarchicalProCoWrapper(
+                    proco_loss=new_proco_loss,
+                    leaf_node_ids=leaf_node_ids,
+                    leaf_path_map=leaf_path_map,
+                    num_nodes=num_nodes,
+                    log_prior=log_prior).to(device)
 
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl,
                                                     optimizer, config, console)

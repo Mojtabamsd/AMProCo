@@ -12,6 +12,7 @@ class HierarchicalProCoWrapper(nn.Module):
                  leaf_node_ids: list,
                  leaf_path_map: dict,
                  num_nodes: int,
+                 log_prior=None,
                  device='cuda'):
         """
         proco_loss: an instance of ProCoLoss (modified to have 'num_classes' = num_nodes).
@@ -25,6 +26,7 @@ class HierarchicalProCoWrapper(nn.Module):
         self.leaf_path_map = leaf_path_map
         self.num_nodes = num_nodes
         self.device = device
+        self.register_buffer("log_prior", log_prior)
 
     def forward(self, features, leaf_labels=None):
         """
@@ -50,6 +52,7 @@ class HierarchicalProCoWrapper(nn.Module):
         ### 2) Evaluate the node-level "contrast_logits" the same way your code does.
         #    We call the ProCoLoss forward with labels=None so it doesn't do the standard single-label scatter.
         node_logits = self.proco_loss(features, labels=None)
+        node_logits = node_logits + self.log_prior
         # shape: [N, num_nodes], each entry is the log-likelihood ratio or partial.
 
         # Combine prototypes at inference
@@ -61,11 +64,13 @@ class HierarchicalProCoWrapper(nn.Module):
 
             path_nodes = self.leaf_path_map[leaf_id]  # e.g. [root, p0, p1, leaf] (2 prototypes => 4 nodes)
             root_log = node_logits[:, path_nodes[0]]
-            proto_logs = [node_logits[:, pid] for pid in path_nodes[1:-1]]
+            # proto_logs = [node_logits[:, pid] for pid in path_nodes[1:-1]]
+            proto_logs = torch.stack([node_logits[:, pid] for pid in path_nodes[1:-1]], dim=1)
             leaf_log = node_logits[:, path_nodes[-1]]
 
             # Best match or mixture?
-            best_proto_log, _ = torch.max(torch.stack(proto_logs, dim=1), dim=1)  # shape [N]
+            # best_proto_log, _ = torch.max(torch.stack(proto_logs, dim=1), dim=1)  # shape [N]
+            best_proto_log = torch.logsumexp(proto_logs, dim=1)
             leaf_logits[:, leaf_idx] = root_log + best_proto_log + leaf_log
 
         return leaf_logits
