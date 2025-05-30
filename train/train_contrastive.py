@@ -819,7 +819,7 @@ def train_cifar(rank, world_size, config, console):
                         new_proco_loss.estimator.kappa[node_id] = torch.tensor(kappa_j, device=device)
 
                         superclass_size = len(superclass_feats[sc_idx])
-                        pseudo = max(int(pi_j * superclass_size), 10)
+                        pseudo = max(int(pi_j * superclass_size), 150)
                         # pseudo = int(pi_j * superclass_size)
                         new_proco_loss.estimator.Amount[node_id] = pseudo
 
