@@ -398,13 +398,14 @@ def train_uvp(rank, world_size, config, console):
                     for j in range(p_i):
                         node_id = proto_list[j]
                         (pi_j, mu_j, kappa_j) = mixture_params[sc_idx][j]
-                        # mu_j is a numpy array of shape [feature_dim]
-                        # ensure it's normalized
                         mu_j = mu_j / (np.linalg.norm(mu_j) + 1e-12)
-                        # set them in the Estimator
+
                         new_proco_loss.estimator.Ave[node_id] = torch.from_numpy(mu_j).to(device)
                         new_proco_loss.estimator.kappa[node_id] = torch.tensor(kappa_j, device=device)
-                        # logC can be updated or left to be updated in next iteration (update_kappa).
+
+                        superclass_size = len(superclass_feats[sc_idx])
+                        pseudo = max(int(pi_j * superclass_size), 100)
+                        new_proco_loss.estimator.Amount[node_id] = pseudo
 
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl,
                                                     optimizer, config, console)
