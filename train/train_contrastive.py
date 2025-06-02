@@ -1030,7 +1030,7 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
 
             alpha = 1
             # if epoch > config.training_contrastive.twostage_epoch:
-            if epoch > 200:
+            if epoch > 149:
                 lambda_ = 0
             else:
                 lambda_ = 1
