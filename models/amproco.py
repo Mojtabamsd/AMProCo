@@ -30,14 +30,17 @@ class HierarchicalProCoWrapper(nn.Module):
         log_u = math.log(1.0 / num_nodes)
         self.register_buffer("log_pi",
                              torch.full((num_nodes,), log_u))
+        self.register_buffer("proto_counts",
+                             torch.ones(num_nodes, dtype=torch.float32))
 
     @torch.no_grad()
     def set_priors(self, numpy_pi):
-        """numpy_pi : 1-D np.array, size = num_nodes, mixture weights π_j"""
+        """Call this once to load mixture weights from offline fit."""
         pi = torch.from_numpy(numpy_pi).float().to(self.log_pi.device)
         pi = pi.clamp_min(1e-12)
         pi = pi / pi.sum()
         self.log_pi.copy_(pi.log())
+        self.proto_counts.copy_(pi * pi.numel())
 
     def forward(self, features, leaf_labels=None):
         """
