@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from scipy.special import ive
 import numpy as np
 import torch.distributed as dist
+import math
 
 
 class HierarchicalProCoWrapper(nn.Module):
@@ -25,6 +26,18 @@ class HierarchicalProCoWrapper(nn.Module):
         self.leaf_path_map = leaf_path_map
         self.num_nodes = num_nodes
         self.device = device
+
+        log_u = math.log(1.0 / num_nodes)
+        self.register_buffer("log_pi",
+                             torch.full((num_nodes,), log_u))
+
+    @torch.no_grad()
+    def set_priors(self, numpy_pi):
+        """numpy_pi : 1-D np.array, size = num_nodes, mixture weights π_j"""
+        pi = torch.from_numpy(numpy_pi).float().to(self.log_pi.device)
+        pi = pi.clamp_min(1e-12)
+        pi = pi / pi.sum()
+        self.log_pi.copy_(pi.log())
 
     def forward(self, features, leaf_labels=None):
         """
@@ -50,7 +63,8 @@ class HierarchicalProCoWrapper(nn.Module):
         ### 2) Evaluate the node-level "contrast_logits" the same way your code does.
         #    We call the ProCoLoss forward with labels=None so it doesn't do the standard single-label scatter.
         node_logits = self.proco_loss(features, labels=None)
-        node_logits = node_logits + self.log_prior
+        # node_logits = node_logits + self.log_prior
+        node_logits = node_logits + self.log_pi.detach()
         # shape: [N, num_nodes], each entry is the log-likelihood ratio or partial.
 
         # Combine prototypes at inference

@@ -832,13 +832,13 @@ def train_cifar(rank, world_size, config, console):
                 pi_vec[pi_vec == 0] = 1e-4
                 pi_vec /= pi_vec.sum()
 
-                new_proco_loss.set_priors(pi_vec)
-
                 new_criterion_scl = HierarchicalProCoWrapper(
                     proco_loss=new_proco_loss,
                     leaf_node_ids=leaf_node_ids,
                     leaf_path_map=leaf_path_map,
                     num_nodes=num_nodes).to(device)
+
+                new_criterion_scl.set_priors(pi_vec)
 
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl,
                                                     optimizer, config, console)
