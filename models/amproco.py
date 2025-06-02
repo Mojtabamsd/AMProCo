@@ -54,6 +54,12 @@ class HierarchicalProCoWrapper(nn.Module):
         if leaf_labels is not None:
             # We'll gather the path for each sample => multi-hot for all nodes
             multi_hot = self._make_multi_hot(leaf_labels)
+
+            batch_counts = multi_hot.sum(0)  # [num_nodes]
+            self.proto_counts += batch_counts
+            freqs = self.proto_counts / self.proto_counts.sum()
+            self.log_pi.copy_(freqs.clamp_min(1e-12).log())
+
             # The original ProCoLoss expects "labels" as shape [N], but we adapt:
             # We'll pass None to forward() but do the update directly in the Estimator...
             self.proco_loss.estimator_old.update_CV(features.detach(), multi_hot)
