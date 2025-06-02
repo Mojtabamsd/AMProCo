@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from scipy.special import ive
 import numpy as np
 import torch.distributed as dist
+import math
 
 
 def miller_recurrence(nu, x):
@@ -266,6 +267,18 @@ class ProCoLoss(nn.Module):
         self.estimator_old = EstimatorCV(self.feature_num, num_classes, self.device)
         self.estimator = EstimatorCV(self.feature_num, num_classes, self.device)
 
+        log_u = math.log(1.0 / num_classes)
+        self.register_buffer("log_pi", torch.full((num_classes,), log_u))
+
+    @torch.no_grad()
+    def set_priors(self, pi_numpy):
+        """pi_numpy: 1-D numpy array (size = num_classes) of mixture weights"""
+        pi = torch.from_numpy(pi_numpy).float().to(self.log_pi.device)
+        pi = pi.clamp_min(1e-12)                   # avoid log(0)
+        pi = pi / pi.sum()                         # normalise just in case
+        self.log_pi.copy_(pi.log())
+
+
     def cal_weight_for_classes(self, cls_num_list):
         cls_num_list = torch.Tensor(cls_num_list).view(1, self.num_classes)
         self.weight = cls_num_list / cls_num_list.sum()
@@ -321,6 +334,8 @@ class ProCoLoss(nn.Module):
         kappa_new = torch.linalg.norm(tem, dim=2)
 
         contrast_logits = LogRatioC.apply(kappa_new, torch.tensor(self.estimator.feature_num), logc)
+
+        contrast_logits = contrast_logits + self.log_pi.detach().unsqueeze(0)
 
         return contrast_logits
 

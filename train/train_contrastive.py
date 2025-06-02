@@ -801,6 +801,8 @@ def train_cifar(rank, world_size, config, console):
                                            num_classes=num_nodes,
                                            device=device)
 
+                pi_vec = np.zeros(num_nodes, dtype=np.float32)
+
                 for sc_idx in range(config.training_contrastive.superclass_num):
                     p_i = p_star[sc_idx]
                     proto_list = superclass_to_protos[sc_idx]
@@ -816,6 +818,13 @@ def train_cifar(rank, world_size, config, console):
                         pseudo = max(int(pi_j * superclass_size), 50)
 
                         new_proco_loss.estimator.Amount[node_id] = pseudo
+
+                        pi_vec[node_id] = pi_j
+
+                pi_vec[pi_vec == 0] = 1e-4
+                pi_vec /= pi_vec.sum()
+
+                new_proco_loss.set_priors(pi_vec)
 
                 new_criterion_scl = HierarchicalProCoWrapper(
                     proco_loss=new_proco_loss,
