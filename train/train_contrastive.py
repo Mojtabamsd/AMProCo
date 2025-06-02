@@ -658,6 +658,14 @@ def train_cifar(rank, world_size, config, console):
     if world_size > 1:
         model = DDP(model, device_ids=[rank])
 
+    # debug
+    epoch_200 = os.path.join(config.training_path, 'model_weights_epoch_200.pth')
+    if os.path.exists(epoch_200):
+        os.remove(epoch_200)
+        print(f"{epoch_200} has been deleted.")
+    else:
+        print(f"{epoch_200} does not exist.")
+
     if config.training_contrastive.path_pretrain:
         pth_files = [file for file in os.listdir(config.training_path) if
                      file.endswith('.pth') and file != 'model_weights_best.pth']
