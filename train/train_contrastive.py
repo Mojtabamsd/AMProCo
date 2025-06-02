@@ -825,7 +825,7 @@ def train_cifar(rank, world_size, config, console):
                         superclass_size = len(superclass_feats[sc_idx])
                         pseudo = max(int(pi_j * superclass_size), 50)
 
-                        # new_proco_loss.estimator.Amount[node_id] = pseudo
+                        new_proco_loss.estimator.Amount[node_id] = pseudo
 
                         pi_vec[node_id] = pi_j
 
