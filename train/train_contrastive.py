@@ -1431,13 +1431,13 @@ def annealed_em_once(X, k, tau, max_iter=15, rng=np.random):
     return [(pi[j], mu[j], kappa[j]) for j in range(k)], logL
 
 
-def newton_kappa(r_bar, d, κ0):
-    κ = max(κ0, 1e-3)
+def newton_kappa(r_bar, d, k0):
+    k = max(k0, 1e-3)
     for _ in range(3):
-        a = iv(d/2, κ) / iv(d/2-1, κ)
-        κ -= (a - r_bar) / (1 - a**2 - (d-1)/κ * a + 1e-12)
-        κ = np.clip(κ, 1e-3, 1e6)
-    return κ
+        a = iv(d/2, k) / iv(d/2-1, k)
+        k -= (a - r_bar) / (1 - a**2 - (d-1)/k * a + 1e-12)
+        k = np.clip(k, 1e-3, 1e6)
+    return k
 
 
 def polish_em(X, seed_params, max_iter=100):
