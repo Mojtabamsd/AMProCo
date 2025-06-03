@@ -1368,17 +1368,123 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     for sc_idx in range(superclass_num):
         feats_sc = np.array(superclass_feats[sc_idx])  # shape [N_sc, feat_dim]
         # best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=k_max, delta_min=delta_min)
-        best_k, best_params = select_vmf_k_advanced(
-            feats_sc,
-            k_max=k_max,
-            criterion="BIC",  # or "AIC", "BIC", or "ICL"
-            restarts=10,
-            delta_stop=delta_min
+        # best_k, best_params = select_vmf_k_advanced(
+        #     feats_sc,
+        #     k_max=k_max,
+        #     criterion="BIC",  # or "AIC", "BIC", or "ICL"
+        #     restarts=10,
+        #     delta_stop=delta_min
+        # )
+
+        best_k, best_params = choose_prototypes(
+            superclass_feats,
+            method="radius_bic",  # e.g. "radius_bic"
+            bic_delta=5.0,  # optional overrides
+            radius_th=0.18,
+            id_th=1.3
         )
+
         p_star.append(best_k)
         mixture_params[sc_idx] = best_params
 
     return p_star, mixture_params
+
+
+import numpy as np
+from scipy.spatial import distance
+
+# ───────────────────────────────────────────────────────────────────
+#  Quick heuristics
+# ───────────────────────────────────────────────────────────────────
+def needs_split_radius(X, threshold=0.15):
+    """True if average cosine radius > threshold."""
+    mu = X.mean(0)
+    mu /= np.linalg.norm(mu) + 1e-12
+    r  = 1.0 - (X @ mu).mean()
+    return r > threshold
+
+def intrinsic_dim_twonn(X):
+    """
+    TWO-NN estimator of intrinsic dimensionality on the hypersphere.
+    Returns ID scalar.
+    """
+    if X.shape[0] < 4:
+        return 0.0
+    # pairwise cosine distance matrix (N×N)
+    dist = distance.squareform(distance.pdist(X, metric='cosine'))
+    np.fill_diagonal(dist, np.inf)
+    d1 = np.partition(dist, 0, axis=1)[:,0]
+    d2 = np.partition(dist, 1, axis=1)[:,1]
+    mu = d2 / (d1 + 1e-12)
+    return 1.0 / (np.mean(np.log(mu + 1e-12)))
+
+
+def choose_prototypes(
+        X,
+        method="bic",
+        bic_delta=10.0,
+        radius_th=0.15,
+        id_th=1.2,
+        **kwargs):
+    """
+    Parameters
+    ----------
+    X          : ndarray (N,D) – unit-norm embeddings
+    method     : str – one of the keys below
+    bic_delta  : float – delta_stop for BIC selectors
+    radius_th  : float – radius threshold for radius-based split
+    id_th      : float – intrinsic-dimension threshold
+    kwargs     : extra arguments forwarded to underlying selector
+    """
+    if X.shape[0] < 5:
+        # not enough points – force single prototype
+        mu  = X.mean(0);  mu /= np.linalg.norm(mu)+1e-12
+        kappa = X.shape[1]
+        return 1, [(1.0, mu, kappa)]
+
+    # 1) plain or advanced BIC
+    if method == "bic":
+        return select_vmf_k(X, delta_stop=bic_delta, **kwargs)
+
+    if method == "bic_adv":
+        return select_vmf_k_advanced(X, delta_stop=bic_delta, **kwargs)
+
+    # 2) geometric radius first, then BIC if needed
+    if method == "radius_bic":
+        if needs_split_radius(X, radius_th):
+            return choose_prototypes(X, method="bic_adv", **kwargs)
+        else:
+            return 1, [(1.0, X.mean(0)/np.linalg.norm(X.mean(0)), X.shape[1])]
+
+    # 3) radius heuristic only (fast baseline)
+    if method == "radius_only":
+        k = 2 if needs_split_radius(X, radius_th) else 1
+        if k == 1:
+            mu = X.mean(0); mu /= np.linalg.norm(mu)+1e-12
+            return 1, [(1.0, mu, X.shape[1])]
+        else:
+            # two-component fast EM
+            params, _ = fit_vmf_mixture_newton(X, 2, restarts=5)
+            return 2, params
+
+    # 4) intrinsic-dimension filter
+    if method == "intrinsic_dim":
+        id_est = intrinsic_dim_twonn(X)
+        if id_est > id_th:
+            return choose_prototypes(X, method="bic_adv", **kwargs)
+        else:
+            mu = X.mean(0); mu /= np.linalg.norm(mu)+1e-12
+            return 1, [(1.0, mu, X.shape[1])]
+
+    # 5) placeholder for confusion-driven online split
+    if method == "confusion_online":
+        raise NotImplementedError(
+            "This strategy needs per-epoch confusion stats.")
+
+    # fallback
+    raise ValueError(f"Unknown prototype-selection method: {method}")
+
+
 
 
 def log_c_p(kappa, d):
@@ -1459,6 +1565,58 @@ def polish_em(X, seed_params, max_iter=100):
         kappa    = np.array([newton_kappa(r_bar[j], D, kappa[j]) for j in range(k)])
     logL = logsumexp(log_vmf_pdf(X, mu, kappa)+np.log(pi+1e-32), axis=1).sum()
     return [(pi[j], mu[j], kappa[j]) for j in range(k)], logL
+
+
+def fit_vmf_mixture_newton(X, k, max_iter=100, restarts=5, rng=None):
+    """
+    Fit a k-component vMF mixture by EM with Newton κ update.
+    Returns params_list, best_logL
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+    N, D = X.shape
+    best_logL, best_params = -np.inf, None
+
+    for _ in range(restarts):
+        # ----- initialise ------------------------------------------------
+        mu    = angular_kmeans_pp_init(X, k, rng)
+        kappa = np.full(k, D, dtype=float)
+        pi    = np.full(k, 1.0 / k, dtype=float)
+
+        # ----- EM loop ---------------------------------------------------
+        for _ in range(max_iter):
+            # E-step
+            log_prob = log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32)
+            log_r    = log_prob - logsumexp(log_prob, axis=1, keepdims=True)
+            R        = np.exp(log_r)
+            Nj       = R.sum(0) + 1e-12
+            pi       = Nj / N
+
+            # M-step: μ
+            weighted = R.T @ X                        # [k,D]
+            mu_norm  = np.linalg.norm(weighted, axis=1, keepdims=True) + 1e-32
+            mu       = weighted / mu_norm
+
+            # M-step: κ with Newton refinement
+            r_bar = (mu_norm.squeeze() / Nj).clip(1e-6, 1 - 1e-6)
+            for j in range(k):
+                kappa[j] = newton_kappa(r_bar[j], D, kappa[j])
+
+        # total log-likelihood
+        logL = logsumexp(
+            log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32), axis=1
+        ).sum()
+
+        if logL > best_logL:
+            best_logL = logL
+            best_params = [(pi[j], mu[j], kappa[j]) for j in range(k)]
+
+    # safety net: if all restarts failed (rare), fall back to single comp
+    if best_params is None:
+        mu0 = X.mean(0);  mu0 /= np.linalg.norm(mu0) + 1e-12
+        best_params = [(1.0, mu0, D)]
+        best_logL   = logsumexp(log_vmf_pdf(X, mu0[None], np.array([D])))
+    return best_params, best_logL
 
 
 def select_vmf_k_advanced(X, k_max=5, criterion="BIC",
