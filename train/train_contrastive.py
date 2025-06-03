@@ -1419,6 +1419,33 @@ def intrinsic_dim_twonn(X):
     return 1.0 / (np.mean(np.log(mu + 1e-12)))
 
 
+
+def _to_feature_matrix(obj):
+    """
+    Accepts:  • ndarray   (shape (N,D) or (D,))
+              • list / tuple of 1-D arrays or lists, all same length
+    Returns:  ndarray (N, D)  dtype float32
+    Raises:   ValueError if the feature dimension is inconsistent
+    """
+    if isinstance(obj, np.ndarray):
+        arr = obj.astype(np.float32, copy=False)
+        return arr[None, :] if arr.ndim == 1 else arr
+
+    # treat as iterable of feature vectors
+    vectors = [np.asarray(v, dtype=np.float32).ravel() for v in obj]
+    if len(vectors) == 0:
+        raise ValueError("Empty feature list.")
+    D = vectors[0].shape[0]
+    for idx, v in enumerate(vectors):
+        if v.shape[0] != D:
+            raise ValueError(
+                f"Inconsistent feature length at index {idx}: "
+                f"{v.shape[0]} vs expected {D}"
+            )
+    return np.stack(vectors, axis=0)
+
+
+
 def choose_prototypes(
         X,
         method="bic",
@@ -1427,15 +1454,11 @@ def choose_prototypes(
         id_th=1.2,
         **kwargs):
 
-    X = np.asarray(X, dtype=np.float32)
-    if X.ndim == 0 or X.size == 0:
-        raise ValueError("choose_prototypes received an empty feature set.")
-    if X.ndim == 1:                       # single vector → make it (1,D)
-        X = X[None, :]
+    X = _to_feature_matrix(X)
 
-    # -----------------------------------------------------------------
-    if X.shape[0] < 5:                   # not enough samples → k = 1
-        mu = X.mean(0);  mu /= np.linalg.norm(mu) + 1e-12
+    if X.shape[0] < 5:
+        mu = X.mean(0)
+        mu /= np.linalg.norm(mu) + 1e-12
         return 1, [(1.0, mu, X.shape[1])]
 
     # 1) plain or advanced BIC
