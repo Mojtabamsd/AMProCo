@@ -1426,21 +1426,17 @@ def choose_prototypes(
         radius_th=0.15,
         id_th=1.2,
         **kwargs):
-    """
-    Parameters
-    ----------
-    X          : ndarray (N,D) – unit-norm embeddings
-    method     : str – one of the keys below
-    bic_delta  : float – delta_stop for BIC selectors
-    radius_th  : float – radius threshold for radius-based split
-    id_th      : float – intrinsic-dimension threshold
-    kwargs     : extra arguments forwarded to underlying selector
-    """
-    if X.shape[0] < 5:
-        # not enough points – force single prototype
-        mu  = X.mean(0);  mu /= np.linalg.norm(mu)+1e-12
-        kappa = X.shape[1]
-        return 1, [(1.0, mu, kappa)]
+
+    X = np.asarray(X, dtype=np.float32)
+    if X.ndim == 0 or X.size == 0:
+        raise ValueError("choose_prototypes received an empty feature set.")
+    if X.ndim == 1:                       # single vector → make it (1,D)
+        X = X[None, :]
+
+    # -----------------------------------------------------------------
+    if X.shape[0] < 5:                   # not enough samples → k = 1
+        mu = X.mean(0);  mu /= np.linalg.norm(mu) + 1e-12
+        return 1, [(1.0, mu, X.shape[1])]
 
     # 1) plain or advanced BIC
     if method == "bic":
