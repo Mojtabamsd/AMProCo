@@ -93,10 +93,17 @@ class HierarchicalProCoWrapper(nn.Module):
             # # soft mixture, uniform prior
             # best_proto_log = torch.logsumexp(torch.stack(proto_logs, 1), dim=1)
 
-            # #soft mixture with π_j priors
+            # # #soft mixture with π_j priors
+            # log_pi = self.log_pi[path_nodes[1:-1]].unsqueeze(0)  # [1, #protos]
+            # weighted = torch.stack(proto_logs, 1) + log_pi
+            # best_proto_log = torch.logsumexp(weighted, dim=1)
+
+            # < 1 ⇒ softer, > 1 ⇒ harder (like max)
+            tau = 0.3
             log_pi = self.log_pi[path_nodes[1:-1]].unsqueeze(0)  # [1, #protos]
-            weighted = torch.stack(proto_logs, 1) + log_pi
-            best_proto_log = torch.logsumexp(weighted, dim=1)
+            proto_stack = torch.stack(proto_logs, 1) / tau + log_pi
+            best_proto_log = torch.logsumexp(proto_stack, dim=1) * tau
+
 
             leaf_logits[:, leaf_idx] = root_log + best_proto_log + leaf_log
 
