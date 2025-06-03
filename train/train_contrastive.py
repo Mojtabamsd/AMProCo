@@ -1030,7 +1030,7 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
 
             alpha = 1
             # if epoch > config.training_contrastive.twostage_epoch:
-            if epoch > 149:
+            if epoch > 200:
                 lambda_ = 0
             else:
                 lambda_ = 1
@@ -1232,8 +1232,6 @@ def accuracy(output, target, topk=(1,)):
         return res
 
 
-
-
 def cal_feats(model, train_loader, leaf_to_superclass_dict, config):
     superclass_feats = [[] for _ in range(20)]
     for i, data in enumerate(train_loader):
@@ -1244,7 +1242,7 @@ def cal_feats(model, train_loader, leaf_to_superclass_dict, config):
         images, leaf_label = images[0].to(config.device), leaf_label.to(config.device)
         with torch.no_grad():
             z, ce_logits, _ = model(images)
-            z = F.normalize(z, p=2, dim=1)  # ensure unit sphere if needed
+            # z = F.normalize(z, p=2, dim=1)  # ensure unit sphere if needed
         leaf_label_array = leaf_label.cpu().numpy()
         for i in range(len(leaf_label)):
             sc_idx = leaf_to_superclass_dict[leaf_label_array[i]]  # e.g. a function returning [0..19]
@@ -1364,7 +1362,6 @@ def select_vmf_k(
     return best_k, best_params
 
 
-
 def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     p_star = []
     mixture_params = {}  # store (pi_j, mu_j, kappa_j) for each j in [1.. best_k]
@@ -1384,13 +1381,14 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     return p_star, mixture_params
 
 
-
 def log_c_p(kappa, d):
     nu = d/2.0 - 1.0
     return nu*np.log(kappa+1e-16) - (d/2.0)*np.log(2*math.pi) - np.log(iv(nu,kappa)+1e-300)
 
+
 def log_vmf_pdf(X, mu, kappa):
     return X @ mu.T * kappa + log_c_p(kappa, X.shape[1])[None,:]
+
 
 def angular_kmeans_pp_init(X, k, rng=np.random.default_rng()):
     """
@@ -1413,7 +1411,6 @@ def angular_kmeans_pp_init(X, k, rng=np.random.default_rng()):
     return mu
 
 
-# ---------- deterministic-annealing EM (short) -----------------------
 def annealed_em_once(X, k, tau, max_iter=15, rng=np.random):
     N, D = X.shape
     mu     = angular_kmeans_pp_init(X, k, rng)
@@ -1433,7 +1430,7 @@ def annealed_em_once(X, k, tau, max_iter=15, rng=np.random):
     logL = logsumexp(log_vmf_pdf(X, mu, kappa)+np.log(pi+1e-32), axis=1).sum()
     return [(pi[j], mu[j], kappa[j]) for j in range(k)], logL
 
-# ---------- full Newton-κ EM (uses annealed result as seed) ----------
+
 def newton_kappa(r_bar, d, κ0):
     κ = max(κ0, 1e-3)
     for _ in range(3):
@@ -1441,6 +1438,7 @@ def newton_kappa(r_bar, d, κ0):
         κ -= (a - r_bar) / (1 - a**2 - (d-1)/κ * a + 1e-12)
         κ = np.clip(κ, 1e-3, 1e6)
     return κ
+
 
 def polish_em(X, seed_params, max_iter=100):
     N, D = X.shape
@@ -1523,12 +1521,13 @@ def select_vmf_k_advanced(X, k_max=5, criterion="BIC",
 
     return best_k, best_params
 
-# ---------- small helpers used above ---------------------------------
+
 def _loglik(X, params):
     pi = np.array([p[0] for p in params])
     mu = np.stack([p[1] for p in params])
     kappa = np.array([p[2] for p in params])
     return logsumexp(log_vmf_pdf(X, mu, kappa)+np.log(pi+1e-32), axis=1).sum()
+
 
 def _posterior_and_entropy(X, params):
     pi = np.array([p[0] for p in params])
