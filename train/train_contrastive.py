@@ -1376,13 +1376,14 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
         #     delta_stop=delta_min
         # )
 
-        best_k, best_params = choose_prototypes(
-            superclass_feats,
-            method="radius_bic",  # e.g. "radius_bic"
-            bic_delta=5.0,  # optional overrides
-            radius_th=0.18,
-            id_th=1.3
+        best_k, best_params = select_vmf_k_with_radius(
+            feats_sc,
+            k_max=k_max,
+            criterion="BIC",  # or "AIC", "BIC", or "ICL"
+            radius_th=0.15,
+            delta_stop=delta_min
         )
+
 
         p_star.append(best_k)
         mixture_params[sc_idx] = best_params
@@ -1390,120 +1391,44 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     return p_star, mixture_params
 
 
-import numpy as np
-from scipy.spatial import distance
-
-# ───────────────────────────────────────────────────────────────────
-#  Quick heuristics
-# ───────────────────────────────────────────────────────────────────
-def needs_split_radius(X, threshold=0.15):
-    """True if average cosine radius > threshold."""
-    mu = X.mean(0)
-    mu /= np.linalg.norm(mu) + 1e-12
-    r  = 1.0 - (X @ mu).mean()
-    return r > threshold
-
-def intrinsic_dim_twonn(X):
+def needs_split_radius(X, thresh=0.15):
     """
-    TWO-NN estimator of intrinsic dimensionality on the hypersphere.
-    Returns ID scalar.
+    Quick test for multi-modality in hyperspherical features.
+
+    Parameters
+    ----------
+    X      : ndarray, shape (N, D)
+             Unit-length embeddings of a single class or superclass.
+    thresh : float
+             Average cosine radius above which we suspect >1 mode.
+
+    Returns
+    -------
+    bool    True  → try k >= 2
+            False → keep k = 1
     """
-    if X.shape[0] < 4:
-        return 0.0
-    # pairwise cosine distance matrix (N×N)
-    dist = distance.squareform(distance.pdist(X, metric='cosine'))
-    np.fill_diagonal(dist, np.inf)
-    d1 = np.partition(dist, 0, axis=1)[:,0]
-    d2 = np.partition(dist, 1, axis=1)[:,1]
-    mu = d2 / (d1 + 1e-12)
-    return 1.0 / (np.mean(np.log(mu + 1e-12)))
+    if X.shape[0] < 5:                      # too few points ⇒ force k = 1
+        return False
+
+    mu = X.mean(axis=0)
+    mu /= np.linalg.norm(mu) + 1e-12        # class centroid on the sphere
+    r  = 1.0 - (X @ mu).mean()              # average cosine radius
+
+    return r > thresh
 
 
-
-def _to_feature_matrix(obj):
+def select_vmf_k_with_radius(X, k_max=5, criterion="BIC", radius_th=0.15, **kw):
     """
-    Accepts:  • ndarray   (shape (N,D) or (D,))
-              • list / tuple of 1-D arrays or lists, all same length
-    Returns:  ndarray (N, D)  dtype float32
-    Raises:   ValueError if the feature dimension is inconsistent
+    First test the radius; if it fails, we skip all >1–component fits.
+    Otherwise fall back to the advanced selector you built earlier.
     """
-    if isinstance(obj, np.ndarray):
-        arr = obj.astype(np.float32, copy=False)
-        return arr[None, :] if arr.ndim == 1 else arr
+    if not needs_split_radius(X, thresh=radius_th):
+        # one quick vMF fit is enough
+        params, _ = polish_em(X, seed_params=[(1.0, X.mean(0)/np.linalg.norm(X.mean(0)), X.shape[1])], max_iter=50)
+        return 1, params
 
-    # treat as iterable of feature vectors
-    vectors = [np.asarray(v, dtype=np.float32).ravel() for v in obj]
-    if len(vectors) == 0:
-        raise ValueError("Empty feature list.")
-    D = vectors[0].shape[0]
-    for idx, v in enumerate(vectors):
-        if v.shape[0] != D:
-            raise ValueError(
-                f"Inconsistent feature length at index {idx}: "
-                f"{v.shape[0]} vs expected {D}"
-            )
-    return np.stack(vectors, axis=0)
-
-
-
-def choose_prototypes(
-        X,
-        method="bic",
-        bic_delta=10.0,
-        radius_th=0.15,
-        id_th=1.2,
-        **kwargs):
-
-    X = _to_feature_matrix(X)
-
-    if X.shape[0] < 5:
-        mu = X.mean(0)
-        mu /= np.linalg.norm(mu) + 1e-12
-        return 1, [(1.0, mu, X.shape[1])]
-
-    # 1) plain or advanced BIC
-    if method == "bic":
-        return select_vmf_k(X, delta_stop=bic_delta, **kwargs)
-
-    if method == "bic_adv":
-        return select_vmf_k_advanced(X, delta_stop=bic_delta, **kwargs)
-
-    # 2) geometric radius first, then BIC if needed
-    if method == "radius_bic":
-        if needs_split_radius(X, radius_th):
-            return choose_prototypes(X, method="bic_adv", **kwargs)
-        else:
-            return 1, [(1.0, X.mean(0)/np.linalg.norm(X.mean(0)), X.shape[1])]
-
-    # 3) radius heuristic only (fast baseline)
-    if method == "radius_only":
-        k = 2 if needs_split_radius(X, radius_th) else 1
-        if k == 1:
-            mu = X.mean(0); mu /= np.linalg.norm(mu)+1e-12
-            return 1, [(1.0, mu, X.shape[1])]
-        else:
-            # two-component fast EM
-            params, _ = fit_vmf_mixture_newton(X, 2, restarts=5)
-            return 2, params
-
-    # 4) intrinsic-dimension filter
-    if method == "intrinsic_dim":
-        id_est = intrinsic_dim_twonn(X)
-        if id_est > id_th:
-            return choose_prototypes(X, method="bic_adv", **kwargs)
-        else:
-            mu = X.mean(0); mu /= np.linalg.norm(mu)+1e-12
-            return 1, [(1.0, mu, X.shape[1])]
-
-    # 5) placeholder for confusion-driven online split
-    if method == "confusion_online":
-        raise NotImplementedError(
-            "This strategy needs per-epoch confusion stats.")
-
-    # fallback
-    raise ValueError(f"Unknown prototype-selection method: {method}")
-
-
+    # otherwise run the full advanced selector
+    return select_vmf_k_advanced(X, k_max=k_max, criterion=criterion, **kw)
 
 
 def log_c_p(kappa, d):
