@@ -840,17 +840,17 @@ def train_cifar(rank, world_size, config, console):
 
                 new_criterion_scl.set_priors(pi_vec)
 
-                # import itertools
-                # backbone = model
-                # criterion = new_criterion_scl
-                #
-                # params = itertools.chain(backbone.parameters(), criterion.parameters())
-                # optimizer = torch.optim.SGD(
-                #     params,
-                #     lr=config.training_contrastive.learning_rate,
-                #     momentum=config.training_contrastive.momentum,
-                #     weight_decay=config.training_contrastive.weight_decay
-                # )
+                import itertools
+                backbone = model
+                criterion = new_criterion_scl
+
+                params = itertools.chain(backbone.parameters(), criterion.parameters())
+                optimizer = torch.optim.SGD(
+                    params,
+                    lr=config.training_contrastive.learning_rate,
+                    momentum=config.training_contrastive.momentum,
+                    weight_decay=config.training_contrastive.weight_decay
+                )
 
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl,
                                                     optimizer, config, console)

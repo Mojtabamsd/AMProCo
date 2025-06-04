@@ -44,36 +44,35 @@ class HierarchicalProCoWrapper(nn.Module):
         self.log_pi.copy_(pi.log())
         self.proto_counts.copy_(pi * pi.numel())
 
-
     def _node_logpdf(self, z):
         """
-        Same functional form as ProCoLoss.forward, but allows a per-prototype
-        temperature τ_j via   kappa_eff = kappa / τ_j.
-        Returns tensor [B, num_nodes].
+        Numerically safe replica of ProCoLoss forward, but with prototype-
+        specific temperature τ_j = exp(log_tau_j).
         """
         est = self.proco_loss.estimator_old  # EstimatorCV
-        mu = F.normalize(est.Ave, dim=1)  # (K,D)
+        mu = F.normalize(est.Ave, dim=1)  # (K, D)  mean dirs
         kappa = est.kappa  # (K,)
-        logc = est.logc  # (K,)
 
-        tau = torch.exp(self.log_tau)  # (K,)
-        kappa_eff = kappa / tau  # (K,)
+        # ---------- temperature per prototype --------------------------------
+        # clamp τ to [0.3, 3] to avoid κ/τ blowing up or vanishing
+        tau = torch.exp(self.log_tau).clamp(0.3, 3.0)  # (K,)
 
-        # ----- replicate ProCo formulation --------------------------------
-        #   kappa_new = ‖ kappa_eff*mu + z/T0 ‖     (T0 = global temperature)
+        # effective κ, then clamp to a safe band [1e-3, 1e5]
+        kappa_eff = (kappa / tau).clamp(1e-3, 1e5)  # (K,)
+
+        # --------------------------------------------------------------------
         T0 = self.proco_loss.temperature
-        term = kappa_eff[:, None] * mu  # (K,D)
-        term = term.unsqueeze(0)  # (1,K,D)
-        vec = z.unsqueeze(1) / T0  # (B,1,D)
-        kappa_new = torch.linalg.norm(term + vec, dim=2)  # (B,K)
+        term = kappa_eff[:, None] * mu  # (K, D)
+        vec = z.unsqueeze(1) / T0  # (B, 1, D)
+        kappa_new = torch.linalg.norm(term + vec, dim=2).clamp(1e-3, 1e5)  # (B, K)
 
-        p = torch.tensor(self.proco_loss.feature_num,
-                         dtype=z.dtype, device=z.device)
+        # log C_d(k_new) – log C_d(k_old)  (d = feature_num)
+        p = torch.tensor(self.proco_loss.feature_num, dtype=z.dtype,
+                         device=z.device)
+        logc_old = est.logc  # (K,)   already matches κ
+        log_ratio = LogRatioC.apply(kappa_new, p, logc_old)
 
-        # log C_d(kappa_new) − log C_d(kappa)
-        log_ratio = LogRatioC.apply(kappa_new, p, logc)
-
-        return log_ratio  # shape (B, K)
+        return log_ratio  # [B, K]
 
     @staticmethod
     def _log_C(kappa, dim):
