@@ -267,6 +267,8 @@ class ProCoLoss(nn.Module):
         self.estimator_old = EstimatorCV(self.feature_num, num_classes, self.device)
         self.estimator = EstimatorCV(self.feature_num, num_classes, self.device)
 
+        self.log_tau = nn.Parameter(torch.zeros(num_classes, device=device))
+
 
     def cal_weight_for_classes(self, cls_num_list):
         cls_num_list = torch.Tensor(cls_num_list).view(1, self.num_classes)
@@ -318,9 +320,18 @@ class ProCoLoss(nn.Module):
         logc = self.estimator_old.logc.detach()
         kappa = self.estimator_old.kappa.detach()
 
-        tem = kappa.reshape(-1, 1) * Ave_norm
-        tem = tem.unsqueeze(0) + features[:N].unsqueeze(1) / self.temperature
-        kappa_new = torch.linalg.norm(tem, dim=2)
+        #new
+        tau = torch.exp(self.log_tau).clamp(0.3, 3.0)
+        kappa_eff = (kappa / tau).clamp(1e-3, 1e5)
+
+        term = kappa_eff.reshape(-1, 1) * Ave_norm  # (K,D)
+        T0 = self.temperature
+        vec = features[:N].unsqueeze(1) / T0
+        kappa_new = torch.linalg.norm(term + vec, dim=2).clamp(1e-3, 1e5)
+
+        # tem = kappa.reshape(-1, 1) * Ave_norm
+        # tem = tem.unsqueeze(0) + features[:N].unsqueeze(1) / self.temperature
+        # kappa_new = torch.linalg.norm(tem, dim=2)
 
         contrast_logits = LogRatioC.apply(kappa_new, torch.tensor(self.estimator.feature_num), logc)
 

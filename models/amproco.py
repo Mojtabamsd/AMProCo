@@ -33,7 +33,7 @@ class HierarchicalProCoWrapper(nn.Module):
                              torch.full((num_nodes,), log_u))
         self.register_buffer("proto_counts",
                              torch.ones(num_nodes, dtype=torch.float32))
-        self.log_tau = nn.Parameter(torch.zeros(num_nodes, device=device))
+
 
     @torch.no_grad()
     def set_priors(self, numpy_pi):
@@ -43,36 +43,6 @@ class HierarchicalProCoWrapper(nn.Module):
         pi = pi / pi.sum()
         self.log_pi.copy_(pi.log())
         self.proto_counts.copy_(pi * pi.numel())
-
-    def _node_logpdf(self, z):
-        """
-        Numerically safe replica of ProCoLoss forward, but with prototype-
-        specific temperature τ_j = exp(log_tau_j).
-        """
-        est = self.proco_loss.estimator_old  # EstimatorCV
-        mu = F.normalize(est.Ave, dim=1)  # (K, D)  mean dirs
-        kappa = est.kappa  # (K,)
-
-        # ---------- temperature per prototype --------------------------------
-        # clamp τ to [0.3, 3] to avoid κ/τ blowing up or vanishing
-        tau = torch.exp(self.log_tau).clamp(0.3, 3.0)  # (K,)
-
-        # effective κ, then clamp to a safe band [1e-3, 1e5]
-        kappa_eff = (kappa / tau).clamp(1e-3, 1e5)  # (K,)
-
-        # --------------------------------------------------------------------
-        T0 = self.proco_loss.temperature
-        term = kappa_eff[:, None] * mu  # (K, D)
-        vec = z.unsqueeze(1) / T0  # (B, 1, D)
-        kappa_new = torch.linalg.norm(term + vec, dim=2).clamp(1e-3, 1e5)  # (B, K)
-
-        # log C_d(k_new) – log C_d(k_old)  (d = feature_num)
-        p = torch.tensor(self.proco_loss.feature_num, dtype=z.dtype,
-                         device=z.device)
-        logc_old = est.logc  # (K,)   already matches κ
-        log_ratio = LogRatioC.apply(kappa_new, p, logc_old)
-
-        return log_ratio  # [B, K]
 
     @staticmethod
     def _log_C(kappa, dim):
@@ -123,9 +93,7 @@ class HierarchicalProCoWrapper(nn.Module):
 
         ### 2) Evaluate the node-level "contrast_logits" the same way your code does.
         #    We call the ProCoLoss forward with labels=None so it doesn't do the standard single-label scatter.
-        # node_logits = self.proco_loss(features, labels=None)
-
-        node_logits = self._node_logpdf(F.normalize(features, dim=1))
+        node_logits = self.proco_loss(features, labels=None)
 
         # node_logits = node_logits + self.log_pi.detach()
         # shape: [N, num_nodes], each entry is the log-likelihood ratio or partial.

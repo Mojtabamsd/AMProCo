@@ -842,7 +842,7 @@ def train_cifar(rank, world_size, config, console):
 
                 import itertools
                 backbone = model
-                criterion = new_criterion_scl
+                criterion = new_proco_loss
 
                 params = itertools.chain(backbone.parameters(), criterion.parameters())
                 optimizer = torch.optim.SGD(
