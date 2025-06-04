@@ -838,7 +838,7 @@ def train_cifar(rank, world_size, config, console):
                     leaf_path_map=leaf_path_map,
                     num_nodes=num_nodes).to(device)
 
-                new_criterion_scl.set_priors(pi_vec)
+                # new_criterion_scl.set_priors(pi_vec)
 
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl,
                                                     optimizer, config, console)
