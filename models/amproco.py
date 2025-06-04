@@ -5,6 +5,7 @@ from scipy.special import ive
 import numpy as np
 import torch.distributed as dist
 import math
+from models.proco import LogRatioC
 
 
 class HierarchicalProCoWrapper(nn.Module):
@@ -43,28 +44,36 @@ class HierarchicalProCoWrapper(nn.Module):
         self.log_pi.copy_(pi.log())
         self.proto_counts.copy_(pi * pi.numel())
 
+
     def _node_logpdf(self, z):
         """
-        Return log p(z|node) for every node.  Works with EstimatorCV.
+        Same functional form as ProCoLoss.forward, but allows a per-prototype
+        temperature τ_j via   kappa_eff = kappa / τ_j.
+        Returns tensor [B, num_nodes].
         """
-        # use the “old” estimator which is kept in sync each mini-batch
-        est = self.proco_loss.estimator_old
+        est = self.proco_loss.estimator_old  # EstimatorCV
+        mu = F.normalize(est.Ave, dim=1)  # (K,D)
+        kappa = est.kappa  # (K,)
+        logc = est.logc  # (K,)
 
-        # 1. mean directions μ  (normalise Ave just in case)
-        mu_raw = est.Ave  # (num_nodes, D)
-        mu = F.normalize(mu_raw, dim=1)
+        tau = torch.exp(self.log_tau)  # (K,)
+        kappa_eff = kappa / tau  # (K,)
 
-        # 2. concentration κ  (already a tensor of shape [num_nodes])
-        kappa = est.kappa
+        # ----- replicate ProCo formulation --------------------------------
+        #   kappa_new = ‖ kappa_eff*mu + z/T0 ‖     (T0 = global temperature)
+        T0 = self.proco_loss.temperature
+        term = kappa_eff[:, None] * mu  # (K,D)
+        term = term.unsqueeze(0)  # (1,K,D)
+        vec = z.unsqueeze(1) / T0  # (B,1,D)
+        kappa_new = torch.linalg.norm(term + vec, dim=2)  # (B,K)
 
-        # 3. prototype temperature τ = exp(log_tau)
-        tau = torch.exp(self.log_tau)  # (num_nodes,)
+        p = torch.tensor(self.proco_loss.feature_num,
+                         dtype=z.dtype, device=z.device)
 
-        kappa_eff = kappa / tau  # per-prototype κ/τ
-        cos = torch.matmul(z, mu.t())  # [B, num_nodes]
-        logC = self._log_C(kappa_eff, z.size(1))  # [num_nodes]
+        # log C_d(kappa_new) − log C_d(kappa)
+        log_ratio = LogRatioC.apply(kappa_new, p, logc)
 
-        return kappa_eff * cos + logC  # [B, num_nodes]
+        return log_ratio  # shape (B, K)
 
     @staticmethod
     def _log_C(kappa, dim):
@@ -115,9 +124,9 @@ class HierarchicalProCoWrapper(nn.Module):
 
         ### 2) Evaluate the node-level "contrast_logits" the same way your code does.
         #    We call the ProCoLoss forward with labels=None so it doesn't do the standard single-label scatter.
-        node_logits = self.proco_loss(features, labels=None)
+        # node_logits = self.proco_loss(features, labels=None)
 
-        # node_logits = self._node_logpdf(F.normalize(features, dim=1))
+        node_logits = self._node_logpdf(F.normalize(features, dim=1))
 
         # node_logits = node_logits + self.log_pi.detach()
         # shape: [N, num_nodes], each entry is the log-likelihood ratio or partial.
