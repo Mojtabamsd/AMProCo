@@ -1368,67 +1368,18 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     for sc_idx in range(superclass_num):
         feats_sc = np.array(superclass_feats[sc_idx])  # shape [N_sc, feat_dim]
         # best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=k_max, delta_min=delta_min)
-        # best_k, best_params = select_vmf_k_advanced(
-        #     feats_sc,
-        #     k_max=k_max,
-        #     criterion="BIC",  # or "AIC", "BIC", or "ICL"
-        #     restarts=10,
-        #     delta_stop=delta_min
-        # )
-
-        best_k, best_params = select_vmf_k_with_radius(
+        best_k, best_params = select_vmf_k_advanced(
             feats_sc,
             k_max=k_max,
             criterion="BIC",  # or "AIC", "BIC", or "ICL"
-            radius_th=0.15,
+            restarts=10,
             delta_stop=delta_min
         )
-
 
         p_star.append(best_k)
         mixture_params[sc_idx] = best_params
 
     return p_star, mixture_params
-
-
-def needs_split_radius(X, thresh=0.15):
-    """
-    Quick test for multi-modality in hyperspherical features.
-
-    Parameters
-    ----------
-    X      : ndarray, shape (N, D)
-             Unit-length embeddings of a single class or superclass.
-    thresh : float
-             Average cosine radius above which we suspect >1 mode.
-
-    Returns
-    -------
-    bool    True  → try k >= 2
-            False → keep k = 1
-    """
-    if X.shape[0] < 5:                      # too few points ⇒ force k = 1
-        return False
-
-    mu = X.mean(axis=0)
-    mu /= np.linalg.norm(mu) + 1e-12        # class centroid on the sphere
-    r  = 1.0 - (X @ mu).mean()              # average cosine radius
-
-    return r > thresh
-
-
-def select_vmf_k_with_radius(X, k_max=5, criterion="BIC", radius_th=0.15, **kw):
-    """
-    First test the radius; if it fails, we skip all >1–component fits.
-    Otherwise fall back to the advanced selector you built earlier.
-    """
-    if not needs_split_radius(X, thresh=radius_th):
-        # one quick vMF fit is enough
-        params, _ = polish_em(X, seed_params=[(1.0, X.mean(0)/np.linalg.norm(X.mean(0)), X.shape[1])], max_iter=50)
-        return 1, params
-
-    # otherwise run the full advanced selector
-    return select_vmf_k_advanced(X, k_max=k_max, criterion=criterion, **kw)
 
 
 def log_c_p(kappa, d):
