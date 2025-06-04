@@ -45,22 +45,26 @@ class HierarchicalProCoWrapper(nn.Module):
 
     def _node_logpdf(self, z):
         """
-        Return log p(z | node) for *all* nodes at once.  z ∈ ℝ^{B×D}.
-        Works regardless of the original ProCoLoss internals.
+        Return log p(z|node) for every node.  Works with EstimatorCV.
         """
-        mu = self.proco_loss.estimator.mu  # (num_nodes, D)
-        kappa = self.proco_loss.estimator.kappa  # (num_nodes,)
-        log_tau = self.log_tau  # (num_nodes,)
-        tau = torch.exp(log_tau)
+        # use the “old” estimator which is kept in sync each mini-batch
+        est = self.proco_loss.estimator_old
 
-        # effective concentration
-        kappa_eff = kappa / tau  # (num_nodes,)
+        # 1. mean directions μ  (normalise Ave just in case)
+        mu_raw = est.Ave  # (num_nodes, D)
+        mu = F.normalize(mu_raw, dim=1)
 
-        # cos similarity [B, num_nodes]
-        cos = torch.matmul(z, mu.t())
-        logC = self._log_C(kappa_eff, z.size(1))  # helper below
+        # 2. concentration κ  (already a tensor of shape [num_nodes])
+        kappa = est.kappa
 
-        return (kappa_eff * cos) + logC  # [B, num_nodes]
+        # 3. prototype temperature τ = exp(log_tau)
+        tau = torch.exp(self.log_tau)  # (num_nodes,)
+
+        kappa_eff = kappa / tau  # per-prototype κ/τ
+        cos = torch.matmul(z, mu.t())  # [B, num_nodes]
+        logC = self._log_C(kappa_eff, z.size(1))  # [num_nodes]
+
+        return kappa_eff * cos + logC  # [B, num_nodes]
 
     @staticmethod
     def _log_C(kappa, dim):
