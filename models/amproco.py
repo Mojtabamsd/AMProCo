@@ -115,9 +115,9 @@ class HierarchicalProCoWrapper(nn.Module):
 
         ### 2) Evaluate the node-level "contrast_logits" the same way your code does.
         #    We call the ProCoLoss forward with labels=None so it doesn't do the standard single-label scatter.
-        # node_logits = self.proco_loss(features, labels=None)
+        node_logits = self.proco_loss(features, labels=None)
 
-        node_logits = self._node_logpdf(F.normalize(features, dim=1))
+        # node_logits = self._node_logpdf(F.normalize(features, dim=1))
 
         # node_logits = node_logits + self.log_pi.detach()
         # shape: [N, num_nodes], each entry is the log-likelihood ratio or partial.
