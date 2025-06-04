@@ -42,6 +42,29 @@ class HierarchicalProCoWrapper(nn.Module):
         self.log_pi.copy_(pi.log())
         self.proto_counts.copy_(pi * pi.numel())
 
+    def _node_logpdf(self, z):
+        """
+        Return log p(z|node) for every node.  Works with EstimatorCV.
+        """
+        # use the “old” estimator which is kept in sync each mini-batch
+        est = self.proco_loss.estimator_old
+
+        # 1. mean directions μ  (normalise Ave just in case)
+        mu_raw = est.Ave  # (num_nodes, D)
+        mu = F.normalize(mu_raw, dim=1)
+
+        # 2. concentration κ  (already a tensor of shape [num_nodes])
+        kappa = est.kappa
+
+        # 3. prototype temperature τ = exp(log_tau)
+        tau = torch.exp(self.log_tau)  # (num_nodes,)
+
+        kappa_eff = kappa / tau  # per-prototype κ/τ
+        cos = torch.matmul(z, mu.t())  # [B, num_nodes]
+        logC = self._log_C(kappa_eff, z.size(1))  # [num_nodes]
+
+        return kappa_eff * cos + logC  # [B, num_nodes]
+
     def forward(self, features, leaf_labels=None):
         """
         1) If leaf_labels is not None, we do memory updates in the 'EstimatorCV'
