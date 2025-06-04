@@ -1368,21 +1368,21 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     for sc_idx in range(superclass_num):
         feats_sc = np.array(superclass_feats[sc_idx])  # shape [N_sc, feat_dim]
         # best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=k_max, delta_min=delta_min)
-        # best_k, best_params = select_vmf_k_advanced(
-        #     feats_sc,
-        #     k_max=k_max,
-        #     criterion="BIC",  # or "AIC", "BIC", or "ICL"
-        #     restarts=10,
-        #     delta_stop=delta_min
-        # )
-
-        best_k, best_params = select_vmf_k_with_radius(
+        best_k, best_params = select_vmf_k_advanced(
             feats_sc,
             k_max=k_max,
             criterion="BIC",  # or "AIC", "BIC", or "ICL"
-            radius_th=0.15,
+            restarts=10,
             delta_stop=delta_min
         )
+
+        # best_k, best_params = select_vmf_k_with_radius(
+        #     feats_sc,
+        #     k_max=k_max,
+        #     criterion="BIC",  # or "AIC", "BIC", or "ICL"
+        #     radius_th=0.15,
+        #     delta_stop=delta_min
+        # )
 
 
         p_star.append(best_k)
