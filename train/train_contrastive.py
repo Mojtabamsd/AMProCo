@@ -847,7 +847,7 @@ def train_cifar(rank, world_size, config, console):
                 params = itertools.chain(backbone.parameters(), criterion.parameters())
                 optimizer = torch.optim.SGD(
                     params,
-                    lr=config.training_contrastive.lr,
+                    lr=config.training_contrastive.learning_rate,
                     momentum=config.training_contrastive.momentum,
                     weight_decay=config.training_contrastive.weight_decay
                 )
