@@ -840,6 +840,19 @@ def train_cifar(rank, world_size, config, console):
 
                 new_criterion_scl.set_priors(pi_vec)
 
+                import itertools
+                backbone = model
+                criterion = new_criterion_scl
+
+                params = itertools.chain(backbone.parameters(), criterion.parameters())
+                optimizer = torch.optim.SGD(
+                    params,
+                    lr=config.training_contrastive.lr,
+                    momentum=config.training_contrastive.momentum,
+                    weight_decay=config.training_contrastive.weight_decay
+                )
+
+
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl,
                                                     optimizer, config, console)
 
@@ -1368,18 +1381,11 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     for sc_idx in range(superclass_num):
         feats_sc = np.array(superclass_feats[sc_idx])  # shape [N_sc, feat_dim]
         # best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=k_max, delta_min=delta_min)
-        # best_k, best_params = select_vmf_k_advanced(
-        #     feats_sc,
-        #     k_max=k_max,
-        #     criterion="BIC",  # or "AIC", "BIC", or "ICL"
-        #     restarts=10,
-        #     delta_stop=delta_min
-        # )
-
-        best_k, best_params = select_vmf_k_id_first(
+        best_k, best_params = select_vmf_k_advanced(
             feats_sc,
             k_max=k_max,
             criterion="BIC",  # or "AIC", "BIC", or "ICL"
+            restarts=10,
             delta_stop=delta_min
         )
 
@@ -1388,96 +1394,6 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
         mixture_params[sc_idx] = best_params
 
     return p_star, mixture_params
-
-
-from sklearn.neighbors import NearestNeighbors
-
-def twonn_id(X, metric="cosine"):
-    """
-    TWO–NN intrinsic dimensionality estimate for a set of unit vectors.
-
-    Parameters
-    ----------
-    X       : ndarray, shape (N, D)  (assumed unit-norm if metric="cosine")
-    metric  : "cosine" (angular) or "euclidean"
-
-    Returns
-    -------
-    id_hat  : float   global ID estimate
-    """
-    # use k = 3 neighbours → we only need the first two distances
-    nbrs = NearestNeighbors(n_neighbors=3, metric=metric, algorithm="auto").fit(X)
-    dists, _ = nbrs.kneighbors(X)        # shape (N, 3) ; dists[:,0] = 0
-    r1 = dists[:, 1] + 1e-12             # first NN
-    r2 = dists[:, 2] + 1e-12             # second NN
-
-    # TWO-NN formula: ID = 1 / mean( log r2 − log r1 )
-    log_ratio = np.log(r2) - np.log(r1)
-    id_hat = 1.0 / (np.mean(log_ratio) + 1e-12)
-    return id_hat
-
-def decide_k_by_id(X, id_thresh=1.3, max_k=5):
-    """
-    Returns suggested k (# prototypes) based on intrinsic dimensionality.
-
-    • If TWO-NN ID ≤ id_thresh → k = 1.
-    • Else  k = min(round(ID), max_k).  (ID≈2 ⇒ try 2 prototypes, etc.)
-
-    Parameters
-    ----------
-    X          : (N, D) array   unit-length embeddings of one class
-    id_thresh  : float          threshold to trigger splitting
-    max_k      : int            clip upper bound
-
-    Returns
-    -------
-    k_suggest  : int
-    id_hat     : float
-    """
-    if X.shape[0] < 5:                     # too few points
-        return 1, 0.0
-
-    id_hat = twonn_id(X, metric="cosine")
-    if id_hat <= id_thresh:
-        return 1, id_hat
-
-    k_suggest = int(np.clip(round(id_hat), 2, max_k))
-    return k_suggest, id_hat
-
-
-def select_vmf_k_id_first(X, k_max=5, criterion="BIC", **adv_kw):
-    """
-    (1) Estimate intrinsic dimensionality.
-    (2) If ID says 1 → fit single vMF.
-        Otherwise run the advanced selector but narrow the search
-        to a band around k_suggest.
-    """
-    k_suggest, id_hat = decide_k_by_id(X, id_thresh=1.3, max_k=k_max)
-
-    if k_suggest == 1:
-        # single component fit
-        mu = X.mean(0);  mu /= np.linalg.norm(mu)+1e-12
-        params = [(1.0, mu, X.shape[1])]
-        return 1, params
-
-    # multi-component search in [k_suggest-1, k_suggest, k_suggest+1]
-    k_low  = max(2, k_suggest - 1)
-    k_high = min(k_max, k_suggest + 1)
-
-    best_k, best_params = None, None
-    best_score = np.inf
-    for k in range(k_low, k_high + 1):
-        k_out, params_out = select_vmf_k_advanced(
-            X, k_max=k, criterion=criterion, **adv_kw)
-        # select_vmf_k_advanced already returns its best_k ≤ k
-        score = -_loglik(X, params_out)    # smaller = better likelihood
-        if score < best_score:
-            best_k, best_params, best_score = k_out, params_out, score
-
-    return best_k, best_params
-
-
-
 
 
 def log_c_p(kappa, d):

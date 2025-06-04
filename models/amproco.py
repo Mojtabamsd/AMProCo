@@ -32,6 +32,7 @@ class HierarchicalProCoWrapper(nn.Module):
                              torch.full((num_nodes,), log_u))
         self.register_buffer("proto_counts",
                              torch.ones(num_nodes, dtype=torch.float32))
+        self.log_tau = nn.Parameter(torch.zeros(num_nodes, device=device))
 
     @torch.no_grad()
     def set_priors(self, numpy_pi):
@@ -41,6 +42,45 @@ class HierarchicalProCoWrapper(nn.Module):
         pi = pi / pi.sum()
         self.log_pi.copy_(pi.log())
         self.proto_counts.copy_(pi * pi.numel())
+
+    def _node_logpdf(self, z):
+        """
+        Return log p(z | node) for *all* nodes at once.  z ∈ ℝ^{B×D}.
+        Works regardless of the original ProCoLoss internals.
+        """
+        mu = self.proco_loss.estimator.mu  # (num_nodes, D)
+        kappa = self.proco_loss.estimator.kappa  # (num_nodes,)
+        log_tau = self.log_tau  # (num_nodes,)
+        tau = torch.exp(log_tau)
+
+        # effective concentration
+        kappa_eff = kappa / tau  # (num_nodes,)
+
+        # cos similarity [B, num_nodes]
+        cos = torch.matmul(z, mu.t())
+        logC = self._log_C(kappa_eff, z.size(1))  # helper below
+
+        return (kappa_eff * cos) + logC  # [B, num_nodes]
+
+    @staticmethod
+    def _log_C(kappa, dim):
+        """
+        log C_d(kappa)  for a batch of κ.  Uses SciPy if available,
+        else a series approximation (works up to κ≈1e3 and dim ≤256).
+        """
+        try:
+            from torch import tensor
+            from scipy.special import iv
+            kappa_np = kappa.detach().cpu().double().numpy()
+            nu = dim / 2.0 - 1.0
+            log_iv = torch.from_numpy(np.log(iv(nu, kappa_np) + 1e-300))
+            return (nu * torch.log(kappa + 1e-16)
+                    - (dim / 2.0) * math.log(2 * math.pi)
+                    - log_iv.to(kappa.device)).float()
+        except ModuleNotFoundError:
+            # quick Taylor for small κ; asymptotic for large κ
+            return -(dim / 2) * math.log(2 * math.pi) + \
+                   (dim / 2 - 1) * torch.log(kappa + 1e-16) - kappa
 
     def forward(self, features, leaf_labels=None):
         """
@@ -71,7 +111,10 @@ class HierarchicalProCoWrapper(nn.Module):
 
         ### 2) Evaluate the node-level "contrast_logits" the same way your code does.
         #    We call the ProCoLoss forward with labels=None so it doesn't do the standard single-label scatter.
-        node_logits = self.proco_loss(features, labels=None)
+        # node_logits = self.proco_loss(features, labels=None)
+
+        node_logits = self._node_logpdf(F.normalize(features, dim=1))
+
         # node_logits = node_logits + self.log_pi.detach()
         # shape: [N, num_nodes], each entry is the log-likelihood ratio or partial.
 
