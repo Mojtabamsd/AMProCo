@@ -322,12 +322,14 @@ class ProCoLoss(nn.Module):
 
         #new
         tau = torch.exp(self.log_tau).clamp(0.3, 3.0)
-        kappa_eff = (kappa / tau).clamp(1e-3, 1e5)
+        # kappa_eff = (kappa / tau).clamp(1e-3, 1e5)
+        kappa_eff = (kappa / tau)
 
         term = kappa_eff.reshape(-1, 1) * Ave_norm  # (K,D)
         T0 = self.temperature
         vec = features[:N].unsqueeze(1) / T0
-        kappa_new = torch.linalg.norm(term + vec, dim=2).clamp(1e-3, 1e5)
+        # kappa_new = torch.linalg.norm(term + vec, dim=2).clamp(1e-3, 1e5)
+        kappa_new = torch.linalg.norm(term + vec, dim=2)
 
         # tem = kappa.reshape(-1, 1) * Ave_norm
         # tem = tem.unsqueeze(0) + features[:N].unsqueeze(1) / self.temperature
