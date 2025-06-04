@@ -1391,44 +1391,90 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     return p_star, mixture_params
 
 
-def needs_split_radius(X, thresh=0.15):
+def mean_shift_vmf(X, kappa=50.0, merge_cos=0.95, max_iter=15, seed_step=10):
     """
-    Quick test for multi-modality in hyperspherical features.
+    Estimate density modes on the sphere by von-Mises-Fisher mean-shift.
 
     Parameters
     ----------
-    X      : ndarray, shape (N, D)
-             Unit-length embeddings of a single class or superclass.
-    thresh : float
-             Average cosine radius above which we suspect >1 mode.
+    X          : (N, D) unit-norm embeddings of one class
+    kappa      : concentration for the kernel  exp(kappa * cos)
+                 larger → smaller bandwidth; try 30–60 for 128-D.
+    merge_cos  : merge peaks whose cosine similarity > 0.95
+    max_iter   : mean-shift iterations
+    seed_step  : subsample every seed_step-th point as an initial seed
+                 (speeds up large N)
 
     Returns
     -------
-    bool    True  → try k >= 2
-            False → keep k = 1
+    peaks      : list of unit vectors (local modes)
+    assign_ids : (N,) int  index of the peak each sample converged to
     """
-    if X.shape[0] < 5:                      # too few points ⇒ force k = 1
-        return False
+    N, D = X.shape
+    # choose seeds (all points if N small, else every k-th point)
+    seeds = X[::seed_step].copy()
 
-    mu = X.mean(axis=0)
-    mu /= np.linalg.norm(mu) + 1e-12        # class centroid on the sphere
-    r  = 1.0 - (X @ mu).mean()              # average cosine radius
+    # precompute X for vectorised dot products
+    for _ in range(max_iter):
+        # cosine between seeds and all points:  (S, N)
+        cos = seeds @ X.T                         # broadcasting
+        weights = np.exp(kappa * cos)
+        # weighted sum  (S, D)
+        num = weights @ X
+        seeds_new = num / (np.linalg.norm(num, axis=1, keepdims=True)+1e-32)
 
-    return r > thresh
+        # convergence test
+        shift = 1.0 - np.sum(seeds * seeds_new, axis=1)   # 1-cos
+        seeds = seeds_new
+        if np.all(shift < 1e-5):
+            break
+
+    # merge close peaks
+    peaks = []
+    for s in seeds:
+        if all(np.dot(s, p) < merge_cos for p in peaks):
+            peaks.append(s)
+
+    peaks = np.stack(peaks, axis=0)                    # (M, D)
+
+    # assign every sample to nearest peak
+    assign_ids = np.argmax(X @ peaks.T, axis=1)        # cosine nearest
+
+    return peaks, assign_ids
+
+
+def decide_k_by_modes(X, max_modes=5, **ms_kwargs):
+    """
+    Returns the number of modes (clipped to max_modes).
+    If only one mode → keep single prototype.
+    """
+    peaks, _ = mean_shift_vmf(X, **ms_kwargs)
+    k = min(len(peaks), max_modes)
+    return max(k, 1), peaks
 
 
 def select_vmf_k_with_radius(X, k_max=5, criterion="BIC", radius_th=0.15, **kw):
-    """
-    First test the radius; if it fails, we skip all >1–component fits.
-    Otherwise fall back to the advanced selector you built earlier.
-    """
-    if not needs_split_radius(X, thresh=radius_th):
-        # one quick vMF fit is enough
-        params, _ = polish_em(X, seed_params=[(1.0, X.mean(0)/np.linalg.norm(X.mean(0)), X.shape[1])], max_iter=50)
-        return 1, params
 
-    # otherwise run the full advanced selector
-    return select_vmf_k_advanced(X, k_max=k_max, criterion=criterion, **kw)
+    k0, peaks = decide_k_by_modes(X, kappa=40.0, merge_cos=0.96)
+
+    if k0 == 1:
+        # fit one vMF centred at peaks[0] (or run 1-component EM)
+        params = [(1.0, peaks[0], X.shape[1])]
+        return 1, params
+    else:
+        # run your EM/BIC search but start at k0
+        best_k, best_params = select_vmf_k_advanced(
+            X,
+            k_max=min(k0+2, k_max),
+            criterion="BIC",
+            use_adam=True
+        )
+        return best_k, best_params
+
+
+
+
+
 
 
 def log_c_p(kappa, d):
