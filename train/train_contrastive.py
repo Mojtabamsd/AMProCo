@@ -1376,11 +1376,10 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
         #     delta_stop=delta_min
         # )
 
-        best_k, best_params = select_vmf_k_with_radius(
+        best_k, best_params = select_vmf_k_id_first(
             feats_sc,
             k_max=k_max,
             criterion="BIC",  # or "AIC", "BIC", or "ICL"
-            radius_th=0.15,
             delta_stop=delta_min
         )
 
@@ -1391,87 +1390,91 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     return p_star, mixture_params
 
 
-def mean_shift_vmf(X, kappa=50.0, merge_cos=0.95, max_iter=15, seed_step=10):
+from sklearn.neighbors import NearestNeighbors
+
+def twonn_id(X, metric="cosine"):
     """
-    Estimate density modes on the sphere by von-Mises-Fisher mean-shift.
+    TWO–NN intrinsic dimensionality estimate for a set of unit vectors.
 
     Parameters
     ----------
-    X          : (N, D) unit-norm embeddings of one class
-    kappa      : concentration for the kernel  exp(kappa * cos)
-                 larger → smaller bandwidth; try 30–60 for 128-D.
-    merge_cos  : merge peaks whose cosine similarity > 0.95
-    max_iter   : mean-shift iterations
-    seed_step  : subsample every seed_step-th point as an initial seed
-                 (speeds up large N)
+    X       : ndarray, shape (N, D)  (assumed unit-norm if metric="cosine")
+    metric  : "cosine" (angular) or "euclidean"
 
     Returns
     -------
-    peaks      : list of unit vectors (local modes)
-    assign_ids : (N,) int  index of the peak each sample converged to
+    id_hat  : float   global ID estimate
     """
-    N, D = X.shape
-    # choose seeds (all points if N small, else every k-th point)
-    seeds = X[::seed_step].copy()
+    # use k = 3 neighbours → we only need the first two distances
+    nbrs = NearestNeighbors(n_neighbors=3, metric=metric, algorithm="auto").fit(X)
+    dists, _ = nbrs.kneighbors(X)        # shape (N, 3) ; dists[:,0] = 0
+    r1 = dists[:, 1] + 1e-12             # first NN
+    r2 = dists[:, 2] + 1e-12             # second NN
 
-    # precompute X for vectorised dot products
-    for _ in range(max_iter):
-        # cosine between seeds and all points:  (S, N)
-        cos = seeds @ X.T                         # broadcasting
-        weights = np.exp(kappa * cos)
-        # weighted sum  (S, D)
-        num = weights @ X
-        seeds_new = num / (np.linalg.norm(num, axis=1, keepdims=True)+1e-32)
+    # TWO-NN formula: ID = 1 / mean( log r2 − log r1 )
+    log_ratio = np.log(r2) - np.log(r1)
+    id_hat = 1.0 / (np.mean(log_ratio) + 1e-12)
+    return id_hat
 
-        # convergence test
-        shift = 1.0 - np.sum(seeds * seeds_new, axis=1)   # 1-cos
-        seeds = seeds_new
-        if np.all(shift < 1e-5):
-            break
-
-    # merge close peaks
-    peaks = []
-    for s in seeds:
-        if all(np.dot(s, p) < merge_cos for p in peaks):
-            peaks.append(s)
-
-    peaks = np.stack(peaks, axis=0)                    # (M, D)
-
-    # assign every sample to nearest peak
-    assign_ids = np.argmax(X @ peaks.T, axis=1)        # cosine nearest
-
-    return peaks, assign_ids
-
-
-def decide_k_by_modes(X, max_modes=5, **ms_kwargs):
+def decide_k_by_id(X, id_thresh=1.3, max_k=5):
     """
-    Returns the number of modes (clipped to max_modes).
-    If only one mode → keep single prototype.
+    Returns suggested k (# prototypes) based on intrinsic dimensionality.
+
+    • If TWO-NN ID ≤ id_thresh → k = 1.
+    • Else  k = min(round(ID), max_k).  (ID≈2 ⇒ try 2 prototypes, etc.)
+
+    Parameters
+    ----------
+    X          : (N, D) array   unit-length embeddings of one class
+    id_thresh  : float          threshold to trigger splitting
+    max_k      : int            clip upper bound
+
+    Returns
+    -------
+    k_suggest  : int
+    id_hat     : float
     """
-    peaks, _ = mean_shift_vmf(X, **ms_kwargs)
-    k = min(len(peaks), max_modes)
-    return max(k, 1), peaks
+    if X.shape[0] < 5:                     # too few points
+        return 1, 0.0
+
+    id_hat = twonn_id(X, metric="cosine")
+    if id_hat <= id_thresh:
+        return 1, id_hat
+
+    k_suggest = int(np.clip(round(id_hat), 2, max_k))
+    return k_suggest, id_hat
 
 
-def select_vmf_k_with_radius(X, k_max=5, criterion="BIC", radius_th=0.15, **kw):
+def select_vmf_k_id_first(X, k_max=5, criterion="BIC", **adv_kw):
+    """
+    (1) Estimate intrinsic dimensionality.
+    (2) If ID says 1 → fit single vMF.
+        Otherwise run the advanced selector but narrow the search
+        to a band around k_suggest.
+    """
+    k_suggest, id_hat = decide_k_by_id(X, id_thresh=1.3, max_k=k_max)
 
-    k0, peaks = decide_k_by_modes(X, kappa=40.0, merge_cos=0.96)
-
-    if k0 == 1:
-        # fit one vMF centred at peaks[0] (or run 1-component EM)
-        params = [(1.0, peaks[0], X.shape[1])]
+    if k_suggest == 1:
+        # single component fit
+        mu = X.mean(0);  mu /= np.linalg.norm(mu)+1e-12
+        params = [(1.0, mu, X.shape[1])]
         return 1, params
-    else:
-        # run your EM/BIC search but start at k0
-        best_k, best_params = select_vmf_k_advanced(
-            X,
-            k_max=min(k0+2, k_max),
-            criterion="BIC",
-            use_adam=True
-        )
-        return best_k, best_params
 
+    # multi-component search in [k_suggest-1, k_suggest, k_suggest+1]
+    k_low  = max(2, k_suggest - 1)
+    k_high = min(k_max, k_suggest + 1)
 
+    best_k, best_params = None, None
+    best_score = np.inf
+    for k in range(k_low, k_high + 1):
+        k_out, params_out = select_vmf_k_advanced(
+            X, k_max=k, criterion=criterion, **adv_kw)
+        # select_vmf_k_advanced already returns its best_k ≤ k
+        score = -_loglik(X, params_out)    # smaller = better likelihood
+        if score < best_score:
+            best_k, best_params, best_score = k_out, params_out, score
+
+    return best_k, best_params
 
 
 
