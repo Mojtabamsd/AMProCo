@@ -689,8 +689,11 @@ def train_cifar(rank, world_size, config, console):
     leaf_class_names, super_classes_id, \
     leaf_to_superclass_dict, super_class_names = leaf_class(train_dataset, config)
 
-    # prototypes_per_superclass = [1] * config.training_contrastive.superclass_num
-    prototypes_per_superclass = config.prototypes
+    if config.protoype:
+        import ast
+        prototypes_per_superclass = ast.literal_eval(config.prototypes)
+    else:
+        prototypes_per_superclass = [1] * config.training_contrastive.superclass_num
     print(prototypes_per_superclass)
 
     prototypes_path = os.path.join(config.training_path, 'prototypes.txt')
