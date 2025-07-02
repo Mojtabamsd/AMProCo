@@ -1,6 +1,6 @@
-import itertools
 import subprocess
 import numpy as np
+import random
 
 
 np.random.seed(42)
@@ -13,17 +13,14 @@ prototype_options = [
     for b in base_prototypes
 ]
 
-all_combinations = list(itertools.product(*prototype_options))
-
-
 N_SAMPLES = 50
-if len(all_combinations) > N_SAMPLES:
-    sampled_combinations = np.array(all_combinations)[
-        np.random.choice(len(all_combinations), N_SAMPLES, replace=False)
-    ]
-else:
-    sampled_combinations = all_combinations
+sampled_combinations = []
 
+for _ in range(N_SAMPLES):
+    config = [random.choice(opts) for opts in prototype_options]
+    sampled_combinations.append(config)
+
+print(f"Sampled {len(sampled_combinations)} configurations.")
 
 for i, config in enumerate(sampled_combinations):
     config_str = ",".join(str(x) for x in config)
