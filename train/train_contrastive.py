@@ -689,7 +689,7 @@ def train_cifar(rank, world_size, config, console):
     leaf_class_names, super_classes_id, \
     leaf_to_superclass_dict, super_class_names = leaf_class(train_dataset, config)
 
-    if config.protoype:
+    if config.prototypes:
         import ast
         prototypes_per_superclass = ast.literal_eval(config.prototypes)
     else:
