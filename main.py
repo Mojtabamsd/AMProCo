@@ -29,6 +29,12 @@ def add_arguments(obj):
         type=str,
         help="Output path to write the results.",
     )
+    obj.add_argument(
+        "-p",
+        "--prototypes",
+        type=str,
+        help="list number of prototype per class",
+    )
 
 
 def main(args=None):
@@ -71,7 +77,7 @@ def call_sampling(args):
 
 
 def call_training_contrastive(args):
-    train_contrastive(args.configuration_file, args.input_folder, args.output_folder)
+    train_contrastive(args.configuration_file, args.input_folder, args.output_folder, args.prototypes)
 
 
 def call_prediction(args):

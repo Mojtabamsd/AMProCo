@@ -34,7 +34,7 @@ from tools.visualization import plot_tsne_from_validate
 from scipy.special import iv, logsumexp
 
 
-def train_contrastive(config_path, input_path, output_path):
+def train_contrastive(config_path, input_path, output_path, prototypes):
 
     config = Configuration(config_path, input_path, output_path)
     config.phase = 'train'      # will train with whole dataset and testing results if there is a test file
@@ -63,6 +63,7 @@ def train_contrastive(config_path, input_path, output_path):
     config.input_csv_train = str(input_csv_train)
     config.input_csv_test = str(input_csv_test)
     config.input_csv_val = str(input_csv_val)
+    config.prototypes = prototypes
 
     if config.training_contrastive.dataset == 'uvp':
         if not input_csv_train.is_file():
@@ -688,7 +689,13 @@ def train_cifar(rank, world_size, config, console):
     leaf_class_names, super_classes_id, \
     leaf_to_superclass_dict, super_class_names = leaf_class(train_dataset, config)
 
-    prototypes_per_superclass = [1] * config.training_contrastive.superclass_num
+    # prototypes_per_superclass = [1] * config.training_contrastive.superclass_num
+    prototypes_per_superclass = config.prototypes
+
+    prototypes_path = os.path.join(config.training_path, 'prototypes.txt')
+    with open(prototypes_path, "w") as f:
+        f.write(str(prototypes_per_superclass))
+
     assert len(prototypes_per_superclass) == 20, "We have 20 superclasses"
 
     if config.training_contrastive.loss == 'proco':
