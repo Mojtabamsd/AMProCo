@@ -23,7 +23,7 @@ for _ in range(N_SAMPLES):
 print(f"Sampled {len(sampled_combinations)} configurations.")
 
 for i, config in enumerate(sampled_combinations):
-    config_str = ",".join(str(x) for x in config)
+    config_str = "[" + ", ".join(str(x) for x in config) + "]"
 
     # Compose the command
     cmd = [
