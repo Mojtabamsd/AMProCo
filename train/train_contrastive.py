@@ -691,6 +691,7 @@ def train_cifar(rank, world_size, config, console):
 
     # prototypes_per_superclass = [1] * config.training_contrastive.superclass_num
     prototypes_per_superclass = config.prototypes
+    print(prototypes_per_superclass)
 
     prototypes_path = os.path.join(config.training_path, 'prototypes.txt')
     with open(prototypes_path, "w") as f:
