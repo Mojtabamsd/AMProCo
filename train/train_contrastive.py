@@ -1267,6 +1267,16 @@ def _loglik_vmf(X, params):
     return logsumexp(log_prob, axis=1).sum()
 
 
+def _local_delta_min(N):
+    """Bayes-factor guideline from Kass & Raftery (1995)."""
+    if N < (50*5):
+        return 1000.0
+    elif N < (200*5):
+        return 10000
+    else:
+        return 20000
+
+
 def select_vmf_k(
         X,
         k_max      = 5,
@@ -1280,6 +1290,8 @@ def select_vmf_k(
     returns   : best_k, best_params
     """
     N, D = X.shape
+    print(N)
+    delta_stop = _local_delta_min(N)
     best_k, best_score, best_params = 1, np.inf, None
     prev_score = np.inf
 
