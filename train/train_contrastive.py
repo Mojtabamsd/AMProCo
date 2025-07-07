@@ -1302,12 +1302,65 @@ def find_best_vmf_mixture_bic(X, k_max=5, delta_min=10.0):
     return best_k, best_params
 
 
+def _local_delta_min(N):
+    """Bayes-factor guideline from Kass & Raftery (1995)."""
+    if N < 50:
+        return 100.0
+    elif N < 200:
+        return 1000.0
+    else:
+        return 10000.0
+
+
+def select_vmf_mixture_bic(X, k_max=5):
+    """
+    X : [N, D]  (unit-norm embeddings of one superclass)
+    Returns
+        best_k, best_params
+    where best_params = [(pi, mu, kappa), ...]   length best_k
+    """
+    N, D = X.shape
+    delta_min = _local_delta_min(N)
+
+    best_bic  = np.inf
+    best_k    = 1
+    best_pars = None
+    prev_bic  = np.inf
+
+    for k in range(1, k_max + 1):
+        params = fit_vmf_mixture(X, k)                     # ← your EM
+
+        # ---------- log-likelihood (vectorised) ----------
+        pi     = np.array([p[0] for p in params])          # [K]
+        mu     = np.stack([p[1] for p in params])          # [K, D]
+        kappa  = np.array([p[2] for p in params])          # [K]
+
+        log_prob = log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32)
+        logL     = logsumexp(log_prob, axis=1).sum()
+
+        # ---------- BIC ----------------------------------
+        param_cnt = k * D + (k - 1)
+        bic       = -2.0 * logL + param_cnt * np.log(N)
+
+        # keep global best
+        if bic < best_bic:
+            best_bic, best_k, best_pars = bic, k, params
+
+        # early stop if improvement below local threshold
+        if (prev_bic - bic) < delta_min:
+            break
+        prev_bic = bic
+
+    return best_k, best_pars
+
+
 def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     p_star = []
     mixture_params = {}  # store (pi_j, mu_j, kappa_j) for each j in [1.. best_k]
     for sc_idx in range(superclass_num):
         feats_sc = np.array(superclass_feats[sc_idx])  # shape [N_sc, feat_dim]
-        best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=k_max, delta_min=delta_min)
+        # best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=k_max, delta_min=delta_min)
+        best_k, best_params = select_vmf_mixture_bic(feats_sc, k_max=k_max)
         p_star.append(best_k)
         mixture_params[sc_idx] = best_params
 
