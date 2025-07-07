@@ -1279,11 +1279,11 @@ Q25, Q75 = np.percentile(ALL_COUNTS, [25, 75])
 def local_delta_min(N):
 
     if N <= Q25:
-        return 1000.0
+        return 1000
     elif N <= Q75:
-        return 10000.0
+        return 10000
     else:
-        return 20000.0
+        return 20000
 
 
 def select_vmf_k(
