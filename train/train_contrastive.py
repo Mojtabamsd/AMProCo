@@ -1269,12 +1269,21 @@ def _loglik_vmf(X, params):
 
 def _local_delta_min(N):
     """Bayes-factor guideline from Kass & Raftery (1995)."""
-    if N < (50*5):
+
+
+ALL_COUNTS = np.array([599, 634, 103, 1043, 633, 354, 765, 1378,
+                       584, 636, 377, 845, 191, 240, 915, 354,
+                       192, 173, 710, 121])
+
+Q25, Q75 = np.percentile(ALL_COUNTS, [25, 75])
+def local_delta_min(N):
+
+    if N <= Q25:
         return 1000.0
-    elif N < (200*5):
-        return 10000
+    elif N <= Q75:
+        return 10000.0
     else:
-        return 20000
+        return 20000.0
 
 
 def select_vmf_k(
@@ -1290,7 +1299,6 @@ def select_vmf_k(
     returns   : best_k, best_params
     """
     N, D = X.shape
-    print(N)
     delta_stop = _local_delta_min(N)
     best_k, best_score, best_params = 1, np.inf, None
     prev_score = np.inf
