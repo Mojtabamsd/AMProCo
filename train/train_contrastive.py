@@ -1299,7 +1299,7 @@ def select_vmf_k(
     returns   : best_k, best_params
     """
     N, D = X.shape
-    delta_stop = _local_delta_min(N)
+    delta_stop = local_delta_min(N)
     best_k, best_score, best_params = 1, np.inf, None
     prev_score = np.inf
 
