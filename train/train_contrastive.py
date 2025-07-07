@@ -1267,74 +1267,54 @@ def _loglik_vmf(X, params):
     return logsumexp(log_prob, axis=1).sum()
 
 
-def select_vmf_k(
-        X,
-        k_max      = 5,
-        criterion  = "BIC",   #  "AIC", "BIC", or "ICL"
-        restarts   = 5,
-        delta_stop = 10.0
-    ):
+def find_best_vmf_mixture_bic(X, k_max=5, delta_min=10.0):
     """
-    X         : [N,D] unit-norm features of one superclass
-    criterion : which score to minimise: 'AIC', 'BIC', or 'ICL'
-    returns   : best_k, best_params
+    X : [N, D]  unit-norm features of a superclass
+    Returns best_k, params_list
     """
     N, D = X.shape
-    best_k, best_score, best_params = 1, np.inf, None
-    prev_score = np.inf
+    best_k, best_bic, best_params = 1, np.inf, None
+    prev_bic = np.inf
 
     for k in range(1, k_max + 1):
+        params = fit_vmf_mixture(X, k)
+        # ------------ log-likelihood (vectorised) -----------------------
+        pi   = np.array([p[0] for p in params])           # [K]
+        mu   = np.stack([p[1] for p in params], axis=0)   # [K, D]
+        kappa= np.array([p[2] for p in params])           # [K]
 
-        # ---------- multiple EM restarts --------------------------------
-        best_logL_k, best_params_k = -np.inf, None
-        for _ in range(restarts):
-            params_try = fit_vmf_mixture(X, k)
-            logL_try   = _loglik_vmf(X, params_try)       # helper below
-            if logL_try > best_logL_k:
-                best_logL_k, best_params_k = logL_try, params_try
+        log_prob = log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32)
+        logL = logsumexp(log_prob, axis=1).sum()
 
-        # ---------- information criteria --------------------------------
-        p_free = k * (D - 1 + 1) + (k - 1)          # µ (D-1), κ (1), π (k-1)
-        if criterion.upper() == "AIC":
-            score = -2.0 * best_logL_k + 2 * p_free
-        else:
-            score = -2.0 * best_logL_k + p_free * np.log(N)   # BIC term
-            if criterion.upper() == "ICL":
-                # subtract 2 * cluster-entropy term
-                _, _, h = _posterior_and_entropy(X, best_params_k)
-                score += 2.0 * h
+        # ------------ BIC ----------------------------------------------
+        param_count = k * D + (k - 1)                     # µ + κ + π
+        bic = -2.0 * logL + param_count * np.log(N)
 
-        # ---------- keep the global minimum -----------------------------
-        if score < best_score:
-            best_k, best_score, best_params = k, score, best_params_k
+        # keep global minimum
+        if bic < best_bic:
+            best_bic, best_k, best_params = bic, k, params
 
-        # ---------- optional early-stop ---------------------------------
-        if prev_score - score < delta_stop:
+        # early-stop if improvement tiny
+        if prev_bic - bic < delta_min:
             break
-        prev_score = score
+        prev_bic = bic
 
     return best_k, best_params
+
 
 def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     p_star = []
     mixture_params = {}  # store (pi_j, mu_j, kappa_j) for each j in [1.. best_k]
     for sc_idx in range(superclass_num):
         feats_sc = np.array(superclass_feats[sc_idx])  # shape [N_sc, feat_dim]
-        # best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=k_max, delta_min=delta_min)
-        best_k, best_params = select_vmf_k(
-            feats_sc,
-            k_max=k_max,
-            criterion="BIC",  # or "AIC", "BIC", or "ICL"
-            restarts=10,
-            delta_stop=delta_min
-        )
+        best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=k_max, delta_min=delta_min)
         p_star.append(best_k)
         mixture_params[sc_idx] = best_params
 
     return p_star, mixture_params
 
 
-def fit_vmf_mixture(X, k, max_iter=50):
+def fit_vmf_mixture(X, k, max_iter=100):
     """
     X : [N, D] (unit vectors)
     Returns list [(pi_j, mu_j, kappa_j)] length k
@@ -1349,7 +1329,7 @@ def fit_vmf_mixture(X, k, max_iter=50):
     for _ in range(max_iter):
         # ---------- E-step ----------------------------------------------
         log_priors = np.log(pi + 1e-32)                    # [K]
-        log_prob = log_vmf_pdf(X, mu, kappa) + log_priors  # [N, K]
+        log_prob = log_vmf_pdf(X, mu, kappa) + log_priors # [N, K]
         log_resps = log_prob - logsumexp(log_prob, axis=1, keepdims=True)
         R = np.exp(log_resps)                              # [N, K]
 
