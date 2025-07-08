@@ -1267,23 +1267,13 @@ def _loglik_vmf(X, params):
     return logsumexp(log_prob, axis=1).sum()
 
 
-def _local_delta_min(N):
-    """Bayes-factor guideline from Kass & Raftery (1995)."""
-
-
-ALL_COUNTS = np.array([599, 634, 103, 1043, 633, 354, 765, 1378,
-                       584, 636, 377, 845, 191, 240, 915, 354,
-                       192, 173, 710, 121])
-
-Q25, Q75 = np.percentile(ALL_COUNTS, [25, 75])
 def local_delta_min(N):
+    """Return an integer δ_min for a given superclass size N."""
+    # raw = -9.2877 + 2.8854 * math.log(N + 1e-12)   # ln-scaling
+    # return int(np.clip(round(raw), 2, 12))
 
-    if N <= Q25:
-        return 1000
-    elif N <= Q75:
-        return 10000
-    else:
-        return 20000
+    raw = -25974.9836 + 6852.8014 * math.log(N + 1e-12)
+    return int(np.clip(round(raw), 1000, 20000))
 
 
 def select_vmf_k(
