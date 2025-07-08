@@ -776,6 +776,25 @@ def train_cifar(rank, world_size, config, console):
         else:
             if epoch == config.training_contrastive.twostage_epoch:
                 superclass_feats = cal_feats(model, train_loader, leaf_to_superclass_dict, config)
+
+                check = True
+                if check:
+                    feasible, delta_global, (L, H) = find_feasible_global_delta(
+                        superclass_feats,
+                        prototypes_per_superclass,
+                        k_max=5,  # same max used during selection
+                        restarts=10  # number of EM restarts
+                    )
+
+                    if feasible:
+                        print(f"Single δ exists!  Interval: ({L:.2f}, {H:.2f})  "
+                              f"→ pick δ = {delta_global:.2f}")
+                    else:
+                        print(f"No single δ can reproduce the desired prototype counts.\n"
+                              f"Tight bounds would be L={L:.2f}, H={H:.2f}.")
+                    import sys
+                    sys.exit()
+
                 p_star, mixture_params = cal_params(superclass_feats, config.training_contrastive.superclass_num,
                                                     config.training_contrastive.k_max,
                                                     config.training_contrastive.delta_min)
@@ -1325,6 +1344,7 @@ def select_vmf_k(
 
     return best_k, best_params
 
+
 def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     p_star = []
     mixture_params = {}  # store (pi_j, mu_j, kappa_j) for each j in [1.. best_k]
@@ -1400,3 +1420,40 @@ def log_vmf_pdf(x, mu, kappa):
     cos = x @ mu.T
     log_norm = log_c_p(kappa, x.shape[1])          # [K]
     return cos * kappa[None, :] + log_norm[None, :]
+
+
+def _bic_for_k(X, k, restarts=5):
+    N, D = X.shape
+    best_logL, best_params = -np.inf, None
+    for _ in range(restarts):
+        params_try = fit_vmf_mixture(X, k)
+        logL_try   = _loglik_vmf(X, params_try)
+        if logL_try > best_logL:
+            best_logL, best_params = logL_try, params_try
+    p_free = k * D + (k - 1)           # µ + κ + π
+    bic    = -2.0 * best_logL + p_free * np.log(N)
+    return bic
+
+
+def find_feasible_global_delta(superclass_feats,
+                               target_K,
+                               k_max     = 6,
+                               restarts  = 5):
+    L, H = -np.inf, np.inf
+
+    for X_s, K_s in zip(superclass_feats, target_K):
+        bic_vals = [_bic_for_k(X_s, k, restarts) for k in range(1, K_s + 2)]
+
+        gains = [bic_vals[i-1] - bic_vals[i] for i in range(1, len(bic_vals))]
+
+        lo_s = gains[K_s-1]
+        hi_s = min(gains[:K_s-1]) if K_s > 1 else np.inf
+
+        L = max(L, lo_s)
+        H = min(H, hi_s)
+
+    if L < H:                         # feasible
+        delta_mid = 0.5 * (L + H)
+        return True, delta_mid, (L, H)
+    else:                             # infeasible
+        return False, None, (L, H)
