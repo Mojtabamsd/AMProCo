@@ -38,15 +38,15 @@ with open(output_path, "w") as f_out:
             delta_str = "best global delta:"
             value = "NaN"  # fallback
 
-            for line in output.splitlines():
-                if delta_str in line:
+            for command in output.splitlines():
+                if delta_str in command:
                     try:
-                        value = float(line.split(":")[1].strip())
+                        value = float(command.split(":")[1].strip())
                     except Exception:
                         value = "NaN"
                     break
 
-            new_line = lines.strip() + f", {value}\n"
+            new_line = line.strip() + f", {value}\n"
             f_out.write(new_line)
 
         except Exception as e:
