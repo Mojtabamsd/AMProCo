@@ -786,7 +786,7 @@ def train_cifar(rank, world_size, config, console):
                         restarts=10
                     )
 
-                    print(f"best global δ ≈ {delta_star:.1f}")
+                    print(f"best global delta: {delta_star:.1f}")
                     print(f"total violation penalty E = {E_tot:.1f}")
                     print(f"intervals satisfied: {sat}/20")
                     import sys

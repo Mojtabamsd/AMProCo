@@ -35,16 +35,19 @@ with open(output_path, "w") as f_out:
             output = result.stdout.strip()
 
             # Try to find line like: best global δ ≈ 6587.0
-            delta_str = "best global δ ≈"
+            delta_str = "best global delta:"
             value = "NaN"  # fallback
 
             for line in output.splitlines():
                 if delta_str in line:
                     try:
-                        value = float(line.split("≈")[1].strip())
+                        value = float(line.split(":")[1].strip())
                     except Exception:
                         value = "NaN"
                     break
+
+            new_line = line.strip() + f", {value}\n"
+            f_out.write(new_line)
 
         except Exception as e:
             print(f"Error on line {i+1}: {e}")
