@@ -17,7 +17,7 @@ for i, line in enumerate(lines):
         cmd = [
             "python", "main.py",
             "training_contrastive",
-            "-c", "/noc/users/mojmas/files/code/AMP/configs/config_cifar-3.yaml",
+            "-c", "/noc/users/mojmas/files/code/AMP/configs/config_cifar-2.yaml",
             "-i", "/noc/users/mojmas/files/data/UVP6Net/",
             "-o", "/noc/users/mojmas/files/data/",
             "-p", config_str
