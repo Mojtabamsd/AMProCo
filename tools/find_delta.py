@@ -46,7 +46,7 @@ with open(output_path, "w") as f_out:
                         value = "NaN"
                     break
 
-            new_line = line.strip() + f", {value}\n"
+            new_line = lines.strip() + f", {value}\n"
             f_out.write(new_line)
 
         except Exception as e:
