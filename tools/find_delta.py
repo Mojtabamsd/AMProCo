@@ -1,7 +1,8 @@
 import subprocess
 import ast
+import os
 
-file_path = "../tools/prediction.txt"
+file_path = os.path.join(os.path.dirname(__file__), "prediction.txt")
 
 with open(file_path, "r") as f:
     lines = f.readlines()
