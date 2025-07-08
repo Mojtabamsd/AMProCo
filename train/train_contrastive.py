@@ -779,19 +779,16 @@ def train_cifar(rank, world_size, config, console):
 
                 check = True
                 if check:
-                    feasible, delta_global, (L, H) = find_feasible_global_delta(
+                    delta_star, E_tot, sat, _ = best_global_delta(
                         superclass_feats,
-                        prototypes_per_superclass,
-                        k_max=5,  # same max used during selection
-                        restarts=10  # number of EM restarts
+                        prototypes_per_superclass,  # your 20-element vector
+                        k_max=5,
+                        restarts=10
                     )
 
-                    if feasible:
-                        print(f"Single δ exists!  Interval: ({L:.2f}, {H:.2f})  "
-                              f"→ pick δ = {delta_global:.2f}")
-                    else:
-                        print(f"No single δ can reproduce the desired prototype counts.\n"
-                              f"Tight bounds would be L={L:.2f}, H={H:.2f}.")
+                    print(f"best global δ ≈ {delta_star:.1f}")
+                    print(f"total violation penalty E = {E_tot:.1f}")
+                    print(f"intervals satisfied: {sat}/20")
                     import sys
                     sys.exit()
 
@@ -1435,29 +1432,39 @@ def _bic_for_k(X, k, restarts=5):
     return bic
 
 
-def find_feasible_global_delta(superclass_feats,
-                               target_K,
-                               k_max     = 6,
-                               restarts  = 5):
-    L, H = -np.inf, np.inf
-
+def best_global_delta(superclass_feats,
+                      target_K,
+                      k_max=6,
+                      restarts=5):
+    """
+    Returns:
+        delta_star   : scalar δ  (float)
+        total_violation : E(δ)   (float, 0 means perfect)
+        satisfied        : number of superclasses whose interval contains δ
+        intervals        : list of (lo, hi) for inspection
+    """
+    intervals = []
     for X_s_list, K_s in zip(superclass_feats, target_K):
-        if len(X_s_list) == 0:
+        if len(X_s_list) == 0:                      # empty superclass
+            intervals.append((-np.inf, np.inf))
             continue
         X_s = np.asarray(X_s_list)
-
+        # --- BIC gains up to K_s+1 ----
         bic_vals = [_bic_for_k(X_s, k, restarts) for k in range(1, K_s + 2)]
-
         gains = [bic_vals[i-1] - bic_vals[i] for i in range(1, len(bic_vals))]
-
-        lo_s = gains[K_s-1]
+        lo_s = gains[K_s-1]                         # first rejected
         hi_s = min(gains[:K_s-1]) if K_s > 1 else np.inf
+        intervals.append((lo_s, hi_s))
 
-        L = max(L, lo_s)
-        H = min(H, hi_s)
+    # candidate deltas: every boundary value
+    candidates = sorted({b for lo,hi in intervals for b in (lo, hi)})
 
-    if L < H:                         # feasible
-        delta_mid = 0.5 * (L + H)
-        return True, delta_mid, (L, H)
-    else:                             # infeasible
-        return False, None, (L, H)
+    best_E, best_delta = np.inf, None
+    for delta in candidates:
+        penalties = [max(0.0, lo - delta, delta - hi) for lo, hi in intervals]
+        E = sum(penalties)
+        if E < best_E:
+            best_E, best_delta = E, delta
+
+    satisfied = sum(1 for lo, hi in intervals if lo < best_delta <= hi)
+    return best_delta, best_E, satisfied, intervals
