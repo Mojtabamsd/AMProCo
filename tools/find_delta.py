@@ -30,18 +30,21 @@ with open(output_path, "w") as f_out:
             print("Command:", " ".join(cmd))
 
             # Run the command and capture output
+            # Run the command and capture output
             result = subprocess.run(cmd, capture_output=True, text=True)
             output = result.stdout.strip()
 
-            # Extract numeric value from output — assuming output is just "6587.0" or contains it
-            try:
-                value = float(output.split()[-1])  # Adjust this if your output is more complex
-            except ValueError:
-                value = "NaN"  # fallback if output isn't a number
+            # Try to find line like: best global δ ≈ 6587.0
+            delta_str = "best global δ ≈"
+            value = "NaN"  # fallback
 
-            # Append result to line and write to new file
-            new_line = line.strip() + f", {value}\n"
-            f_out.write(new_line)
+            for line in output.splitlines():
+                if delta_str in line:
+                    try:
+                        value = float(line.split("≈")[1].strip())
+                    except Exception:
+                        value = "NaN"
+                    break
 
         except Exception as e:
             print(f"Error on line {i+1}: {e}")

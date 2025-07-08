@@ -789,9 +789,8 @@ def train_cifar(rank, world_size, config, console):
                     print(f"best global δ ≈ {delta_star:.1f}")
                     print(f"total violation penalty E = {E_tot:.1f}")
                     print(f"intervals satisfied: {sat}/20")
-                    return delta_star
-                    # import sys
-                    # sys.exit()
+                    import sys
+                    sys.exit()
 
                 p_star, mixture_params = cal_params(superclass_feats, config.training_contrastive.superclass_num,
                                                     config.training_contrastive.k_max,
