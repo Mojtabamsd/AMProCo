@@ -1441,7 +1441,11 @@ def find_feasible_global_delta(superclass_feats,
                                restarts  = 5):
     L, H = -np.inf, np.inf
 
-    for X_s, K_s in zip(superclass_feats, target_K):
+    for X_s_list, K_s in zip(superclass_feats, target_K):
+        if len(X_s_list) == 0:
+            continue
+        X_s = np.asarray(X_s_list)
+
         bic_vals = [_bic_for_k(X_s, k, restarts) for k in range(1, K_s + 2)]
 
         gains = [bic_vals[i-1] - bic_vals[i] for i in range(1, len(bic_vals))]
