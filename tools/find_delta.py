@@ -2,30 +2,47 @@ import subprocess
 import ast
 import os
 
-file_path = os.path.join(os.path.dirname(__file__), "prediction.txt")
+input_path = os.path.join(os.path.dirname(__file__), "prediction.txt")
+output_path = os.path.join(os.path.dirname(__file__), "prediction_updated.txt")
 
-with open(file_path, "r") as f:
+with open(input_path, "r") as f:
     lines = f.readlines()
 
-for i, line in enumerate(lines):
-    try:
-        config_part = line.strip().split("],")[0] + "]"
-        config_list = ast.literal_eval(config_part)
-        config_str = str(config_list)
+with open(output_path, "w") as f_out:
+    for i, line in enumerate(lines):
+        try:
+            # Extract config list
+            config_part = line.strip().split("],")[0] + "]"
+            config_list = ast.literal_eval(config_part)
+            config_str = str(config_list)
 
-        # Compose the command
-        cmd = [
-            "python", "main.py",
-            "training_contrastive",
-            "-c", "/noc/users/mojmas/files/code/AMP/configs/config_cifar-2.yaml",
-            "-i", "/noc/users/mojmas/files/data/UVP6Net/",
-            "-o", "/noc/users/mojmas/files/data/",
-            "-p", config_str
-        ]
+            # Compose command
+            cmd = [
+                "python", "main.py",
+                "training_contrastive",
+                "-c", "/noc/users/mojmas/files/code/AMP/configs/config_cifar-2.yaml",
+                "-i", "/noc/users/mojmas/files/data/UVP6Net/",
+                "-o", "/noc/users/mojmas/files/data/",
+                "-p", config_str
+            ]
 
-        print(f"\n=== Running config {i+1}/{len(lines)} ===")
-        print("Command:", " ".join(cmd))
+            print(f"\n=== Running config {i+1}/{len(lines)} ===")
+            print("Command:", " ".join(cmd))
 
-        subprocess.run(cmd)
-    except Exception as e:
-        print(f"Skipping line {i+1} due to error: {e}")
+            # Run the command and capture output
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            output = result.stdout.strip()
+
+            # Extract numeric value from output — assuming output is just "6587.0" or contains it
+            try:
+                value = float(output.split()[-1])  # Adjust this if your output is more complex
+            except ValueError:
+                value = "NaN"  # fallback if output isn't a number
+
+            # Append result to line and write to new file
+            new_line = line.strip() + f", {value}\n"
+            f_out.write(new_line)
+
+        except Exception as e:
+            print(f"Error on line {i+1}: {e}")
+            f_out.write(line.strip() + ", ERROR\n")
