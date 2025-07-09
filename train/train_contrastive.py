@@ -1419,17 +1419,26 @@ def log_vmf_pdf(x, mu, kappa):
     return cos * kappa[None, :] + log_norm[None, :]
 
 
-def _bic_for_k(X, k, restarts=5):
+def _bic_for_k(X, k, restarts=5, criterion="BIC"):
+    """Return IC score (AIC/BIC) for mixture size k."""
     N, D = X.shape
+
     best_logL, best_params = -np.inf, None
     for _ in range(restarts):
         params_try = fit_vmf_mixture(X, k)
         logL_try   = _loglik_vmf(X, params_try)
         if logL_try > best_logL:
             best_logL, best_params = logL_try, params_try
-    p_free = k * D + (k - 1)           # µ + κ + π
-    bic    = -2.0 * best_logL + p_free * np.log(N)
-    return bic
+
+    p_free = k * D + (k - 1)
+    if criterion.upper() == "AIC":
+        score = -2.0 * best_logL + 2 * p_free
+    else:                           # BIC or ICL
+        score = -2.0 * best_logL + p_free * np.log(N)
+        if criterion.upper() == "ICL":
+            _, _, h = _posterior_and_entropy(X, best_params)
+            score += 2.0 * h
+    return score, best_params
 
 
 def best_global_delta(superclass_feats,
@@ -1450,7 +1459,7 @@ def best_global_delta(superclass_feats,
             continue
         X_s = np.asarray(X_s_list)
         # --- BIC gains up to K_s+1 ----
-        bic_vals = [_bic_for_k(X_s, k, restarts) for k in range(1, K_s + 2)]
+        bic_vals, _ = [_bic_for_k(X_s, k, restarts) for k in range(1, K_s + 2)]
         gains = [bic_vals[i-1] - bic_vals[i] for i in range(1, len(bic_vals))]
         lo_s = gains[K_s-1]                         # first rejected
         hi_s = min(gains[:K_s-1]) if K_s > 1 else np.inf
