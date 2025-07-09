@@ -1322,6 +1322,7 @@ def select_vmf_k(
     N, D = X.shape
     if delta_stop is None:
         delta_stop = local_delta_min(N)
+    print(delta_stop)
     best_k, best_score, best_params = 1, np.inf, None
     prev_score = np.inf
 
