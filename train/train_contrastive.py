@@ -1462,7 +1462,7 @@ def best_global_delta(superclass_feats,
             continue
         X_s = np.asarray(X_s_list)
         # --- BIC gains up to K_s+1 ----
-        bic_vals, _ = [_bic_for_k(X_s, k, restarts, rng=GLOBAL_RNG) for k in range(1, K_s + 2)]
+        bic_vals = [_bic_for_k(X_s, k, restarts, rng=GLOBAL_RNG) for k in range(1, K_s + 2)]
         gains = [bic_vals[i-1] - bic_vals[i] for i in range(1, len(bic_vals))]
         lo_s = gains[K_s-1]                         # first rejected
         hi_s = min(gains[:K_s-1]) if K_s > 1 else np.inf

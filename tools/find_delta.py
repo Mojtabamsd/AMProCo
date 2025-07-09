@@ -34,7 +34,6 @@ with open(output_path, "w") as f_out:
             result = subprocess.run(cmd, capture_output=True, text=True)
             output = result.stdout.strip()
 
-            # Try to find line like: best global δ ≈ 6587.0
             delta_str = "best global delta:"
             value = "NaN"  # fallback
 
