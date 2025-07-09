@@ -29,9 +29,18 @@ import time
 import torch.nn.functional as F
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
-import numpy as np
 from tools.visualization import plot_tsne_from_validate
 from scipy.special import iv, logsumexp
+import torch, numpy as np, random, os
+
+SEED = 42
+np.random.seed(SEED)
+random.seed(SEED)
+torch.manual_seed(SEED)
+os.environ["PYTHONHASHSEED"] = str(SEED)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+GLOBAL_RNG = np.random.default_rng(SEED)
 
 
 def train_contrastive(config_path, input_path, output_path, prototypes):
@@ -1314,7 +1323,7 @@ def select_vmf_k(
         # ---------- multiple EM restarts --------------------------------
         best_logL_k, best_params_k = -np.inf, None
         for _ in range(restarts):
-            params_try = fit_vmf_mixture(X, k)
+            params_try = fit_vmf_mixture(X, k, rng=GLOBAL_RNG)
             logL_try   = _loglik_vmf(X, params_try)       # helper below
             if logL_try > best_logL_k:
                 best_logL_k, best_params_k = logL_try, params_try
@@ -1361,14 +1370,15 @@ def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     return p_star, mixture_params
 
 
-def fit_vmf_mixture(X, k, max_iter=50):
+def fit_vmf_mixture(X, k, max_iter=50, rng=None):
     """
     X : [N, D] (unit vectors)
     Returns list [(pi_j, mu_j, kappa_j)] length k
     """
+    if rng is None:
+        rng = GLOBAL_RNG
     N, D = X.shape
     # ----- initialisation -------------------------------------------------
-    rng = np.random.default_rng()
     mu = X[rng.choice(N, size=k, replace=False)]           # K-means++ style
     kappa = np.full(k, D, dtype=np.float64)
     pi = np.full(k, 1.0 / k, dtype=np.float64)
@@ -1419,11 +1429,13 @@ def log_vmf_pdf(x, mu, kappa):
     return cos * kappa[None, :] + log_norm[None, :]
 
 
-def _bic_for_k(X, k, restarts=5):
+def _bic_for_k(X, k, restarts=5, rng=None):
+    if rng is None:
+        rng = GLOBAL_RNG
     N, D = X.shape
     best_logL, best_params = -np.inf, None
     for _ in range(restarts):
-        params_try = fit_vmf_mixture(X, k)
+        params_try = fit_vmf_mixture(X, k, rng=rng)
         logL_try   = _loglik_vmf(X, params_try)
         if logL_try > best_logL:
             best_logL, best_params = logL_try, params_try
@@ -1450,7 +1462,7 @@ def best_global_delta(superclass_feats,
             continue
         X_s = np.asarray(X_s_list)
         # --- BIC gains up to K_s+1 ----
-        bic_vals, _ = [_bic_for_k(X_s, k, restarts) for k in range(1, K_s + 2)]
+        bic_vals, _ = [_bic_for_k(X_s, k, restarts, rng=GLOBAL_RNG) for k in range(1, K_s + 2)]
         gains = [bic_vals[i-1] - bic_vals[i] for i in range(1, len(bic_vals))]
         lo_s = gains[K_s-1]                         # first rejected
         hi_s = min(gains[:K_s-1]) if K_s > 1 else np.inf
