@@ -798,6 +798,15 @@ def train_cifar(rank, world_size, config, console):
                     print(f"best global delta: {delta_star:.1f}")
                     print(f"total violation penalty E = {E_tot:.1f}")
                     print(f"intervals satisfied: {sat}/20")
+
+                    proto_vec, mix_pars = cal_params(
+                        superclass_feats,
+                        config.training_contrastive.superclass_num,
+                        config.training_contrastive.k_max,
+                        delta_star)
+
+                    print("Prototype counts:", proto_vec)
+
                     import sys
                     sys.exit()
 
@@ -1294,9 +1303,6 @@ def _loglik_vmf(X, params):
 
 def local_delta_min(N):
     """Return an integer δ_min for a given superclass size N."""
-    # raw = -9.2877 + 2.8854 * math.log(N + 1e-12)   # ln-scaling
-    # return int(np.clip(round(raw), 2, 12))
-
     raw = -25974.9836 + 6852.8014 * math.log(N + 1e-12)
     return int(np.clip(round(raw), 1000, 20000))
 
@@ -1306,7 +1312,7 @@ def select_vmf_k(
         k_max      = 5,
         criterion  = "BIC",   #  "AIC", "BIC", or "ICL"
         restarts   = 5,
-        delta_stop = 10.0
+        delta_stop = None,
     ):
     """
     X         : [N,D] unit-norm features of one superclass
@@ -1314,7 +1320,8 @@ def select_vmf_k(
     returns   : best_k, best_params
     """
     N, D = X.shape
-    delta_stop = local_delta_min(N)
+    if delta_stop is None:
+        delta_stop = local_delta_min(N)
     best_k, best_score, best_params = 1, np.inf, None
     prev_score = np.inf
 
