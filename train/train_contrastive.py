@@ -799,13 +799,13 @@ def train_cifar(rank, world_size, config, console):
                     print(f"total violation penalty E = {E_tot:.1f}")
                     print(f"intervals satisfied: {sat}/20")
 
-                    proto_vec, mix_pars = cal_params(
-                        superclass_feats,
-                        config.training_contrastive.superclass_num,
-                        config.training_contrastive.k_max,
-                        delta_star)
-
-                    print("Prototype counts:", proto_vec)
+                    # proto_vec, mix_pars = cal_params(
+                    #     superclass_feats,
+                    #     config.training_contrastive.superclass_num,
+                    #     config.training_contrastive.k_max,
+                    #     delta_star)
+                    #
+                    # print("Prototype counts:", proto_vec)
 
                     import sys
                     sys.exit()
