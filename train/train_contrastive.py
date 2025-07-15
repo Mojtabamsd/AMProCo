@@ -276,7 +276,17 @@ def train_uvp(rank, world_size, config, console):
     leaf_class_names, super_classes_id, \
     leaf_to_superclass_dict, super_class_names = leaf_class(train_dataset, config)
 
-    prototypes_per_superclass = [1] * config.training_contrastive.superclass_num
+    if config.prototypes:
+        import ast
+        prototypes_per_superclass = ast.literal_eval(config.prototypes)
+    else:
+        prototypes_per_superclass = [1] * config.training_contrastive.superclass_num
+    print(prototypes_per_superclass)
+
+    prototypes_path = os.path.join(config.training_path, 'prototypes.txt')
+    with open(prototypes_path, "w") as f:
+        f.write(str(prototypes_per_superclass))
+
     assert len(prototypes_per_superclass) == 20, "We have 20 superclasses"
 
     if config.training_contrastive.loss == 'proco':
