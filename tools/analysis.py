@@ -6,11 +6,8 @@ from scipy.stats import spearmanr
 from sklearn.ensemble import RandomForestRegressor
 import seaborn as sns
 import statsmodels.api as sm
+import shap
 import matplotlib.pyplot as plt
-
-
-
-
 
 
 
@@ -38,7 +35,7 @@ feature_names = [
 ]
 
 save = False
-out_path = r'D:\mojmas\files\Projects\CVPR\plots'
+out_path = r'D:\mojmas\files\Projects\CVPR\plots\results'
 filename = r"prediction2.txt"
 with open(filename, "r") as f:
     raw = f.read()
@@ -259,8 +256,7 @@ y = df_sample['accuracy']
 # # plt.show()
 
 
-import shap
-import matplotlib.pyplot as plt
+
 
 # Fit Random Forest again (if not already)
 rf = RandomForestRegressor(n_estimators=100, random_state=42)
@@ -270,23 +266,26 @@ rf.fit(X, y)
 explainer = shap.Explainer(rf)
 shap_values = explainer(X)
 
-save = True
+# save = True
 
 if save:
-    shap.summary_plot(shap_values, X, feature_names=feature_names, show=False)
+    plt.figure()
+    shap.summary_plot(shap_values, X, feature_names=feature_names, plot_size=(12, 8), show=False)
     out_path_name = out_path + r"\shap_summary_dot.png"
     plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
     plt.close()
 
 
 if save:
-    shap.summary_plot(shap_values, X, feature_names=feature_names, plot_type='bar', show=False)
+    plt.figure()
+    shap.summary_plot(shap_values, X, feature_names=feature_names, plot_type='bar', plot_size=(12, 8), show=False)
     out_path_name = out_path + r"\shap_bar.png"
     plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
     plt.close()
 
 
 if save:
+    plt.figure()
     highlight_mask = (X == 1)
 
     # Loop through features to overlay red dots where prototype == 1
@@ -314,16 +313,156 @@ if save:
     plt.close()
 
 if save:
+    plt.figure()
     # binary, 1 again rest
     X_binary = (X == 1).astype(int)  # 1 = exactly 1 prototype; 0 = all others
     rf_bin = RandomForestRegressor().fit(X_binary, y)
     explainer_bin = shap.Explainer(rf_bin)
     shap_vals_bin = explainer_bin(X_binary)
 
-    shap.summary_plot(shap_vals_bin, X_binary, feature_names=feature_names, plot_type='bar', show=False)
+    shap.summary_plot(shap_vals_bin, X_binary, feature_names=feature_names, plot_type='bar', plot_size=(12, 8), show=False)
     out_path_name = out_path + r"\shap_bar_binart.png"
     plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
     plt.close()
+
+
+#### top configs plotting
+
+top10_df = df.sort_values(by="accuracy", ascending=False).head(10).reset_index(drop=True)
+
+# Step 2: Extract prototype count columns
+proto_matrix = top10_df[P_cols]
+
+# Step 3: Assign meaningful row and column labels
+proto_matrix.index = [f'Run {i+1} (acc={a:.2f})' for i, a in enumerate(top10_df['accuracy'])]
+proto_matrix.columns = feature_names  # use readable class names
+
+if save:
+    # Step 4: Plot heatmap
+    plt.figure(figsize=(14, 6))
+    sns.heatmap(proto_matrix, annot=True, fmt="d", cmap="YlOrRd", cbar_kws={'label': 'Prototype Count'})
+    plt.title("Top-10 High-Accuracy Runs: Prototype Allocation Heatmap")
+    plt.xlabel("Superclass")
+    plt.ylabel("Run (Accuracy)")
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    # plt.show()
+    out_path_name = out_path + r"\top_10_heatmap.png"
+    plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
+    plt.close()
+
+
+# radar plot
+
+# Get prototype matrix from top-10 accuracy runs
+top10_df = df.sort_values(by="accuracy", ascending=False).head(5).reset_index(drop=True)
+proto_matrix = top10_df[P_cols]
+proto_matrix.columns = feature_names
+
+# Set up angles for radar axes
+num_vars = len(feature_names)
+angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
+angles += angles[:1]  # close the circle
+
+
+
+if save:
+    # Create figure
+    fig = plt.figure(figsize=(8, 8))
+    ax = plt.subplot(111, polar=True)
+    # Plot each run
+    for i, row in proto_matrix.iterrows():
+        values = row.values.tolist()
+        values += values[:1]  # close the radar chart
+        ax.plot(angles, values, label=f"Run {i+1} (acc={top10_df.loc[i, 'accuracy']:.2f})", alpha=0.5)
+        ax.fill(angles, values, alpha=0.05)
+
+    # Set class labels around the circle
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(feature_names, fontsize=9)
+    ax.set_title("Radar Plot: Prototype Distribution in Top-10 Accuracy Runs", size=14, pad=20)
+
+    # Optional: Hide y-axis labels or set radial limits
+    ax.set_yticklabels([])
+    ax.set_rlabel_position(0)
+
+    plt.legend(bbox_to_anchor=(1.3, 1.05), loc='upper left')
+    plt.tight_layout()
+    # plt.show()
+    out_path_name = out_path + r"\top_10_radar.png"
+    plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
+    plt.close()
+
+
+### Best vs. worst configs
+
+# Define top and bottom N configs
+N = 10
+topN = df.sort_values(by='accuracy', ascending=False).head(N)
+botN = df.sort_values(by='accuracy', ascending=True).head(N)
+
+# Compute average prototype counts per class
+top_mean = topN[P_cols].mean().values
+bot_mean = botN[P_cols].mean().values
+
+# Build comparison DataFrame
+comp_df = pd.DataFrame({
+    'Superclass': feature_names,
+    'Top Accuracy': top_mean,
+    'Bottom Accuracy': bot_mean
+})
+
+# Melt for seaborn
+comp_df_melted = comp_df.melt(id_vars='Superclass', var_name='Group', value_name='Avg Prototype Count')
+
+if save:
+    # Plot
+    plt.figure(figsize=(12, 6))
+    sns.barplot(data=comp_df_melted, x='Superclass', y='Avg Prototype Count', hue='Group')
+    plt.title(f"Top-{N} vs. Bottom-{N} Prototype Allocation per Class")
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    # plt.show()
+    out_path_name = out_path + r"\top_vs_bottom.png"
+    plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
+    plt.close()
+
+
+# radar
+
+import numpy as np
+
+# Radar-style prototype shape
+top_vals = top_mean.tolist() + [top_mean[0]]
+bot_vals = bot_mean.tolist() + [bot_mean[0]]
+
+angles = np.linspace(0, 2 * np.pi, len(feature_names), endpoint=False).tolist()
+angles += angles[:1]
+
+
+if save:
+    fig = plt.figure(figsize=(8, 8))
+    ax = plt.subplot(111, polar=True)
+
+    ax.plot(angles, top_vals, label=f'Top {N} avg', color='green', lw=2)
+    ax.fill(angles, top_vals, color='green', alpha=0.1)
+
+    ax.plot(angles, bot_vals, label=f'Bottom {N} avg', color='red', lw=2)
+    ax.fill(angles, bot_vals, color='red', alpha=0.1)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(feature_names, fontsize=9)
+    ax.set_yticklabels([])
+    ax.set_title("Radar Plot: Avg Prototype Distribution\nTop vs. Bottom Accuracy Runs", size=13, pad=20)
+
+    plt.legend(loc='upper right', bbox_to_anchor=(1.2, 1.1))
+    plt.tight_layout()
+    # plt.show()
+
+    out_path_name = out_path + r"\top_vs_bottom_radar.png"
+    plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
+    plt.close()
+
 
 a=1
 
