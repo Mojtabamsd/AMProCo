@@ -59,8 +59,7 @@ delta_max = df['delta'].max()
 df['delta'] = 100 * (df['delta'] - delta_min) / (delta_max - delta_min)
 
 
-#### Ablation:
-
+############### Ablation ########################
 # 1 Fix total_prototypes, vary delta
 df_sample = df.sort_values(by="accuracy", ascending=False).head(100)
 
@@ -126,7 +125,7 @@ if save:
     plt.savefig(out_path_name, dpi=600)
     plt.close()
 
-#### --- SHAP Analysis ---
+############### SHAP Analysis ########################
 # feature importance to answer "Which classes' prototype counts explain accuracy best?"
 # df_sample = df.sort_values(by="accuracy", ascending=False).head(100)
 df_sample = df.copy()
@@ -202,10 +201,9 @@ if save:
     plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
     plt.close()
 
-
-#### top configs plotting
-
-top10_df = df.sort_values(by="accuracy", ascending=False).head(10).reset_index(drop=True)
+############## top configs ########################
+N = 10
+top10_df = df.sort_values(by="accuracy", ascending=False).head(N).reset_index(drop=True)
 
 # Step 2: Extract prototype count columns
 proto_matrix = top10_df[P_cols]
@@ -214,6 +212,7 @@ proto_matrix = top10_df[P_cols]
 proto_matrix.index = [f'Run {i+1} (acc={a:.2f})' for i, a in enumerate(top10_df['accuracy'])]
 proto_matrix.columns = feature_names  # use readable class names
 
+# heatmap
 if save:
     # Step 4: Plot heatmap
     plt.figure(figsize=(14, 6))
@@ -292,7 +291,7 @@ if save:
     # Set class labels around the circle
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(feature_names, fontsize=9)
-    ax.set_title("Radar Plot: Prototype Distribution in Top-10 Accuracy Runs", size=14, pad=20)
+    # ax.set_title("Radar Plot: Prototype Distribution in Top-10 Accuracy Runs", size=14, pad=20)
 
     # Optional: Hide y-axis labels or set radial limits
     ax.set_yticklabels([])
@@ -346,9 +345,8 @@ bot_vals = bot_mean.tolist() + [bot_mean[0]]
 angles = np.linspace(0, 2 * np.pi, len(feature_names), endpoint=False).tolist()
 angles += angles[:1]
 
-
 if save:
-    fig = plt.figure(figsize=(10, 10))
+    fig = plt.figure(figsize=(8, 8))
     ax = plt.subplot(111, polar=True)
 
     ax.plot(angles, top_vals, label=f'Top {N} avg', color='green', lw=2)
@@ -361,6 +359,10 @@ if save:
     ax.set_xticklabels(feature_names, fontsize=9)
     ax.set_yticklabels([])
     # ax.set_title("Radar Plot: Avg Prototype Distribution\nTop vs. Bottom Accuracy Runs", size=13, pad=20)
+
+    yticks = ax.get_yticks()
+    yticklabels = [f'{y:.1f}' for y in yticks]
+    ax.set_yticklabels(yticklabels, fontsize=9)
 
     plt.legend(loc='upper right', bbox_to_anchor=(1.2, 1.1))
     plt.tight_layout()
