@@ -1076,6 +1076,8 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
     console.info(
         f"SCL loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {scl_loss_all.avg:.4f} ")
     console.info(f"acc train top1 [{epoch + 1}/{config.training_contrastive.num_epoch}] - Acc: {top1.avg:.4f} ")
+    console.info(f"Batch time train [{epoch + 1}/{config.training_contrastive.num_epoch}] - "
+                 f"Time: {batch_time.val:.3f} ({batch_time.avg:.3f}) ")
 
     return ce_loss_all, scl_loss_all, top1
 
