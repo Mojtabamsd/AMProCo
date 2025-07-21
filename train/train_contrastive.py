@@ -438,40 +438,40 @@ def train_uvp(rank, world_size, config, console):
         if is_distributed:
             dist.barrier()
 
-        if rank != -1:
-            acc1, many, med, few, total_labels, all_preds, all_features = validate(train_loader, val_loader, model, criterion_ce, config, console)
-
-            is_best = acc1 > best_acc1
-            best_acc1 = max(acc1, best_acc1)
-            if is_best:
-                best_many = many
-                best_med = med
-                best_few = few
-                console.info('Epoch: {:.3f}, Best Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: '
-                             '{:.3f}'.format(round(epoch+1), best_acc1, best_many, best_med, best_few))
-
-                # Save the model weights
-                saved_weights_best = f'model_weights_best.pth'
-                saved_weights_file_best = os.path.join(config.training_path, saved_weights_best)
-
-                console.info(f"Model weights saved to {saved_weights_file_best}")
-                torch.save(model.state_dict(), saved_weights_file_best)
-
-            top1_val_avg.append(acc1)
-            plot_loss(top1_val_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
-                      name='ACC_validation.png')
-
-            # if epoch % 20 == 0:
-            #     plot_tsne_from_validate(
-            #         all_features=all_features,
-            #         total_labels=total_labels,
-            #         class_to_superclass=leaf_to_superclass_dict,
-            #         leaf_class_names=leaf_class_names,
-            #         super_class_names=super_class_names,
-            #         title_prefix="ValSet",
-            #         save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
-            #         epoch=epoch  # e.g. if you're at epoch 20
-            #     )
+        # if rank != -1:
+        #     acc1, many, med, few, total_labels, all_preds, all_features = validate(train_loader, val_loader, model, criterion_ce, config, console)
+        #
+        #     is_best = acc1 > best_acc1
+        #     best_acc1 = max(acc1, best_acc1)
+        #     if is_best:
+        #         best_many = many
+        #         best_med = med
+        #         best_few = few
+        #         console.info('Epoch: {:.3f}, Best Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: '
+        #                      '{:.3f}'.format(round(epoch+1), best_acc1, best_many, best_med, best_few))
+        #
+        #         # Save the model weights
+        #         saved_weights_best = f'model_weights_best.pth'
+        #         saved_weights_file_best = os.path.join(config.training_path, saved_weights_best)
+        #
+        #         console.info(f"Model weights saved to {saved_weights_file_best}")
+        #         torch.save(model.state_dict(), saved_weights_file_best)
+        #
+        #     top1_val_avg.append(acc1)
+        #     plot_loss(top1_val_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+        #               name='ACC_validation.png')
+        #
+        #     # if epoch % 20 == 0:
+        #     #     plot_tsne_from_validate(
+        #     #         all_features=all_features,
+        #     #         total_labels=total_labels,
+        #     #         class_to_superclass=leaf_to_superclass_dict,
+        #     #         leaf_class_names=leaf_class_names,
+        #     #         super_class_names=super_class_names,
+        #     #         title_prefix="ValSet",
+        #     #         save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
+        #     #         epoch=epoch  # e.g. if you're at epoch 20
+        #     #     )
 
     if rank != -1:
         # Create a plot of the loss values
