@@ -458,8 +458,8 @@ def train_uvp(rank, world_size, config, console):
                 torch.save(model.state_dict(), saved_weights_file_best)
 
             top1_val_avg.append(acc1)
-            plot_loss(top1_val_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
-                      name='ACC_validation.png')
+            # plot_loss(top1_val_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+            #           name='ACC_validation.png')
 
             # if epoch % 20 == 0:
             #     plot_tsne_from_validate(
