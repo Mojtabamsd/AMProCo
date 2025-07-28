@@ -83,19 +83,18 @@ def train_contrastive(config_path, input_path, output_path, prototypes):
             console.info("Label not provided for testing")
             print(input_csv_test)
 
+    time_str = str(datetime.datetime.now().strftime("%Y%m%d%H%M%S"))
+    rel_training_path = Path(config.training_contrastive.dataset + "_training_contrastive" + time_str)
+    training_path = output_folder / rel_training_path
+    if not training_path.exists():
+        training_path.mkdir(exist_ok=True, parents=True)
+    elif training_path.exists():
+        console.error("The output folder", training_path, "exists.")
+        console.quit("Folder exists, not overwriting previous results.")
+
     if config.training_contrastive.path_pretrain:
-        training_path = Path(config.training_contrastive.path_pretrain)
-        config.training_path = training_path
-    else:
-        time_str = str(datetime.datetime.now().strftime("%Y%m%d%H%M%S"))
-        rel_training_path = Path(config.training_contrastive.dataset + "_training_contrastive" + time_str)
-        training_path = output_folder / rel_training_path
-        config.training_path = training_path
-        if not training_path.exists():
-            training_path.mkdir(exist_ok=True, parents=True)
-        elif training_path.exists():
-            console.error("The output folder", training_path, "exists.")
-            console.quit("Folder exists, not overwriting previous results.")
+        src_dir = Path(config.training_contrastive.path_pretrain)
+        shutil.copytree(src_dir, training_path)
 
     # Save configuration file
     output_config_filename = training_path / "config.yaml"
