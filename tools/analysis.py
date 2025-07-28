@@ -61,13 +61,15 @@ df['delta'] = 100 * (df['delta'] - delta_min) / (delta_max - delta_min)
 
 ############### Ablation ########################
 # 1 Fix total_prototypes, vary delta
-df_sample = df.sort_values(by="accuracy", ascending=False).head(100)
+df_sample = df.sort_values(by="accuracy", ascending=False).head(123)
 
 proto_target = df_sample['total_prototypes'].mode()[0]
+proto_target = 46
 # ablation2 = df[df['total_prototypes'] == proto_target]
-ablation2 = df_sample[np.isclose(df_sample['total_prototypes'], proto_target, atol=3)]
+ablation2 = df_sample[np.isclose(df_sample['total_prototypes'], proto_target, atol=5)]
 
 baseline_accuracy = ablation2.loc[ablation2['accuracy'].idxmin(), 'accuracy']
+# baseline_accuracy = 50.57
 ablation2['accuracy_improvement'] = ablation2['accuracy'] - baseline_accuracy
 
 sorted_df1 = ablation2.sort_values("delta")
@@ -77,7 +79,7 @@ smoothed1 = lowess1(sorted_df1["accuracy_improvement"], sorted_df1["delta"], fra
 # 2 vary total_prototypes
 top_10 = df.nlargest(50, 'accuracy')
 bottom_10 = df.nsmallest(5, 'accuracy')
-specific_row = df.loc[[114]]
+specific_row = df.loc[[114, 113, 111, 110]]
 
 # Combine them
 df_sample = pd.concat([top_10, bottom_10, specific_row])
