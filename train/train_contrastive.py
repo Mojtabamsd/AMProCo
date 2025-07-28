@@ -85,7 +85,14 @@ def train_contrastive(config_path, input_path, output_path, prototypes):
 
     if config.training_contrastive.path_pretrain:
         src_dir = Path(config.training_contrastive.path_pretrain)
-        shutil.copytree(src_dir, training_path)
+        for file in os.listdir(src_dir):
+            if file.endswith(".pth"):
+                src_file = os.path.join(src_dir, file)
+                dst_file = os.path.join(training_path, file)
+                shutil.copy2(src_file, dst_file)
+                print(f"Copied: {file}")
+
+        print("All .pth files copied.")
 
     # Save configuration file
     output_config_filename = training_path / "config.yaml"
