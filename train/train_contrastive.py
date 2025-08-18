@@ -293,7 +293,7 @@ def train_uvp(rank, world_size, config, console):
     with open(prototypes_path, "w") as f:
         f.write(str(prototypes_per_superclass))
 
-    assert len(prototypes_per_superclass) == 20, "We have 20 superclasses"
+    assert len(prototypes_per_superclass) == config.training_contrastive.superclass_num
 
     if config.training_contrastive.loss == 'proco':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
