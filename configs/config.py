@@ -33,7 +33,7 @@ class TrainingContrastiveConfig:
     def __init__(self, dataset, im_factor, superclass_num, k_max, delta_min, architecture_type, batch_size,
                  accumulation_steps, num_workers, gray, target_size, padding, pre_train, learning_rate, weight_decay,
                  cos, momentum, schedule, num_epoch, warmup_epoch, twostage_epoch, loss, feat_dim,
-                 temp, use_norm, path_pretrain):
+                 temp, use_norm, path_pretrain, fine_tune):
         self.dataset = dataset
         self.im_factor = im_factor
         self.superclass_num = superclass_num
@@ -60,6 +60,7 @@ class TrainingContrastiveConfig:
         self.temp = temp
         self.use_norm = use_norm
         self.path_pretrain = path_pretrain
+        self.fine_tune = fine_tune
 
 
 class PredictionConfig:

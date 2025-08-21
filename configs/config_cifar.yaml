@@ -48,6 +48,7 @@ training_contrastive:
   use_norm: True # cosine classifier.
   path_pretrain: '/noc/users/mojmas/files/data/cifar100_training_contrastive20250204163343-149' # if False training from scratch
 #  path_pretrain: False # if False training from scratch
+  fine_tune: False
 
 
 prediction:

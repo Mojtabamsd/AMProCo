@@ -250,21 +250,46 @@ def train_uvp(rank, world_size, config, console):
                      file.endswith('.pth') and file != 'model_weights_best.pth']
         epochs = [int(file.split('_')[-1].split('.')[0]) for file in pth_files]
         latest_epoch = max(epochs)
+        fine_tune_start_epoch = latest_epoch
         latest_pth_file = f"model_weights_epoch_{latest_epoch}.pth"
 
         saved_weights_file = os.path.join(config.training_path, latest_pth_file)
         state_dict = torch.load(saved_weights_file, map_location=device)
 
+        fine_tune = config.training_contrastive.fine_tune
+
         if world_size > 1:
-            new_state_dict = state_dict
+            # new_state_dict = state_dict
+            new_state_dict = {
+                k: v for k, v in state_dict.items()
+                if not (fine_tune and k.startswith('module.fc.'))
+            }
         else:
-            new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+            # new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+            new_state_dict = {
+                k.replace('module.', ''): v for k, v in state_dict.items()
+                if not (fine_tune and k.replace('module.', '').startswith('fc.'))
+            }
 
         console.info("Model loaded from ", saved_weights_file)
         model.load_state_dict(new_state_dict, strict=True)
         model.to(device)
     else:
         latest_epoch = 0
+
+    if config.training_contrastive.fine_tune:
+        base_model = model.module if hasattr(model, 'module') else model
+
+        # Freeze backbone
+        for param in base_model.encoder.parameters():
+            param.requires_grad = False
+
+        # Unfreeze head and fc
+        for param in base_model.head.parameters():
+            param.requires_grad = True
+
+        for param in base_model.fc.parameters():
+            param.requires_grad = True
 
     # Loss criterion and optimizer
     # class_counts = train_dataset.data_frame['label'].value_counts().sort_index().tolist()
@@ -342,9 +367,25 @@ def train_uvp(rank, world_size, config, console):
                                                  leaf_path_map=leaf_path_map,
                                                  num_nodes=num_nodes).to(device)
 
-    optimizer = torch.optim.SGD(model.parameters(), config.training_contrastive.learning_rate,
-                                momentum=config.training_contrastive.momentum,
-                                weight_decay=config.training_contrastive.weight_decay)
+    if not config.training_contrastive.fine_tune:
+        optimizer = torch.optim.SGD(model.parameters(), config.training_contrastive.learning_rate,
+                                    momentum=config.training_contrastive.momentum,
+                                    weight_decay=config.training_contrastive.weight_decay)
+    else:
+        base_lr = config.training_contrastive.learning_rate
+        base_lr_l4 = 0.10  # was base_lr / 10
+        base_lr_low = 0.01  # was base_lr / 100
+
+        optimizer = torch.optim.SGD([
+            {"params": base_model.fc.parameters(), "lr": base_lr, "base_lr": base_lr},
+            {"params": base_model.encoder.layer4.parameters(), "lr": base_lr_l4, "base_lr": base_lr_l4},
+            {"params": list(base_model.encoder.layer1.parameters()) +
+                       list(base_model.encoder.layer2.parameters()) +
+                       list(base_model.encoder.layer3.parameters()),
+             "lr": base_lr_low, "base_lr": base_lr_low}
+        ],
+            momentum=config.training_contrastive.momentum,
+            weight_decay=config.training_contrastive.weight_decay)
 
     # if config.training_contrastive.path_pretrain:
     #     proco_loss.reload_memory()
@@ -361,7 +402,7 @@ def train_uvp(rank, world_size, config, console):
         if is_distributed and sampler_train is not None:
             sampler_train.set_epoch(epoch)
 
-        adjust_lr(optimizer, epoch, config)
+        adjust_lr(optimizer, epoch, config, fine_tune_start_epoch)
 
         if epoch < config.training_contrastive.twostage_epoch:
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
@@ -1208,19 +1249,52 @@ class AverageMeter(object):
         return fmtstr.format(**self.__dict__)
 
 
-def adjust_lr(optimizer, epoch, config):
+def adjust_lr(optimizer, epoch, config, fine_tune_start_epoch=90, warmup_len=2, use_warmup=True):
     """Decay the learning rate based on schedule"""
     lr = config.training_contrastive.learning_rate
-    if epoch < config.training_contrastive.warmup_epoch:
-        lr = lr / config.training_contrastive.warmup_epoch * (epoch + 1)
-    elif config.training_contrastive.cos:  # cosine lr schedule
-        lr *= 0.5 * (1. + math.cos(math.pi * (epoch - config.training_contrastive.warmup_epoch + 1) /
-                                   (config.training_contrastive.num_epoch - config.training_contrastive.warmup_epoch + 1)))
-    else:  # stepwise lr schedule
-        for milestone in config.training_contrastive.schedule:
-            lr *= 0.1 if epoch >= milestone else 1.
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
+
+    if config.training_contrastive.fine_tune:
+        # Cosine factor shared across groups
+        fine_tune_end_epoch = config.training_contrastive.num_epoch
+        t_num = max(1, (fine_tune_end_epoch - fine_tune_start_epoch + 1))
+        t = (epoch - fine_tune_start_epoch + 1) / t_num
+        t = min(max(t, 0.0), 1.0)
+        cosine = 0.5 * (1.0 + math.cos(math.pi * t))
+
+        start_fc = fine_tune_start_epoch
+        start_l4 = start_fc + 5
+        start_low = start_fc + 10
+
+        def wup(ep, start):
+            # linear 0→1 over warmup_len epochs after 'start'
+            if not use_warmup:
+                return 1.0  # skip warmup
+            prog = (ep - start + 1) / float(warmup_len)
+            return 0.0 if ep < start else min(max(prog, 0.0), 1.0)
+
+        for gi, pg in enumerate(optimizer.param_groups):
+            base = pg["base_lr"]
+
+            if gi == 0:  # fc
+                w = wup(epoch, start_fc)
+            elif gi == 1:  # layer4
+                w = wup(epoch, start_l4)
+            else:  # layers 1–3
+                w = wup(epoch, start_low)
+
+            pg["lr"] = base * cosine * w
+
+    else:
+        if epoch < config.training_contrastive.warmup_epoch:
+            lr = lr / config.training_contrastive.warmup_epoch * (epoch + 1)
+        elif config.training_contrastive.cos:  # cosine lr schedule
+            lr *= 0.5 * (1. + math.cos(math.pi * (epoch - config.training_contrastive.warmup_epoch + 1) /
+                                       (config.training_contrastive.num_epoch - config.training_contrastive.warmup_epoch + 1)))
+        else:  # stepwise lr schedule
+            for milestone in config.training_contrastive.schedule:
+                lr *= 0.1 if epoch >= milestone else 1.
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
 
 
 def accuracy(output, target, topk=(1,)):
