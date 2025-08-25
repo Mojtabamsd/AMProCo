@@ -243,7 +243,7 @@ def train_uvp(rank, world_size, config, console):
     # console.info(memory_usage(config, model, device))
 
     if world_size > 1:
-        model = DDP(model, device_ids=[rank])
+        model = DDP(model, device_ids=[rank], find_unused_parameters=True)
 
     if config.training_contrastive.path_pretrain:
         pth_files = [file for file in os.listdir(config.training_path) if
@@ -258,24 +258,18 @@ def train_uvp(rank, world_size, config, console):
 
         fine_tune = config.training_contrastive.fine_tune
 
-        # if world_size > 1:
-        #     # new_state_dict = state_dict
-        #     new_state_dict = {
-        #         k: v for k, v in state_dict.items()
-        #         if not (fine_tune and k.startswith('module.fc.'))
-        #     }
-        # else:
-        #     # new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
-        #     new_state_dict = {
-        #         k.replace('module.', ''): v for k, v in state_dict.items()
-        #         if not (fine_tune and k.replace('module.', '').startswith('fc.'))
-        #     }
-
         if world_size > 1:
-            new_state_dict = state_dict
+            # new_state_dict = state_dict
+            new_state_dict = {
+                k: v for k, v in state_dict.items()
+                if not (fine_tune and k.startswith('module.fc.'))
+            }
         else:
-            new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
-
+            # new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+            new_state_dict = {
+                k.replace('module.', ''): v for k, v in state_dict.items()
+                if not (fine_tune and k.replace('module.', '').startswith('fc.'))
+            }
         console.info("Model loaded from ", saved_weights_file)
         model.load_state_dict(new_state_dict, strict=True)
         model.to(device)
