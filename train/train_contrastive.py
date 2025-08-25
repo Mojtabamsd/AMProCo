@@ -259,17 +259,10 @@ def train_uvp(rank, world_size, config, console):
         fine_tune = config.training_contrastive.fine_tune
 
         if world_size > 1:
-            # new_state_dict = state_dict
-            new_state_dict = {
-                k: v for k, v in state_dict.items()
-                if not (fine_tune and k.startswith('module.fc.'))
-            }
+            new_state_dict = state_dict
         else:
-            # new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
-            new_state_dict = {
-                k.replace('module.', ''): v for k, v in state_dict.items()
-                if not (fine_tune and k.replace('module.', '').startswith('fc.'))
-            }
+            new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+
         console.info("Model loaded from ", saved_weights_file)
         model.load_state_dict(new_state_dict, strict=True)
         model.to(device)
