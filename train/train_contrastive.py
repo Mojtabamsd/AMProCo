@@ -244,7 +244,7 @@ def train_uvp(rank, world_size, config, console):
 
     if world_size > 1:
         model = DDP(model, device_ids=[rank], find_unused_parameters=True)
-
+    fine_tune_start_epoch = 0
     if config.training_contrastive.path_pretrain:
         pth_files = [file for file in os.listdir(config.training_path) if
                      file.endswith('.pth') and file != 'model_weights_best.pth']
@@ -275,6 +275,8 @@ def train_uvp(rank, world_size, config, console):
         # Freeze backbone
         for param in base_model.encoder.parameters():
             param.requires_grad = False
+            early_layers = False
+            late_layers = False
 
         # Unfreeze head and fc
         for param in base_model.head.parameters():
@@ -395,6 +397,27 @@ def train_uvp(rank, world_size, config, console):
             sampler_train.set_epoch(epoch)
 
         adjust_lr(optimizer, epoch, config, fine_tune_start_epoch)
+
+        if (
+                config.training_contrastive.fine_tune
+                and epoch >= (config.training_contrastive.num_epoch - 8)
+                and not late_layers
+        ):
+            print(f"Epoch {epoch} - Unfreezing last layer in encoder (backbone).")
+            for param in base_model.encoder.layer4.parameters():
+                param.requires_grad = True
+            late_layers = True
+
+        if (
+                config.training_contrastive.fine_tune
+                and epoch >= (config.training_contrastive.num_epoch - 3)
+                and not early_layers
+        ):
+            print(f"Epoch {epoch} - Unfreezing whole backbone.")
+            for param in base_model.encoder.parameters():
+                param.requires_grad = True
+            early_layers = True
+
 
         if epoch < config.training_contrastive.twostage_epoch:
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
