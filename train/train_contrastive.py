@@ -728,8 +728,8 @@ def train_cifar(rank, world_size, config, console):
     # console.info(memory_usage(config, model, device))
 
     if world_size > 1:
-        model = DDP(model, device_ids=[rank])
-
+        model = DDP(model, device_ids=[rank], find_unused_parameters=True)
+    fine_tune_start_epoch = 0
     if config.training_contrastive.path_pretrain:
         pth_files = [file for file in os.listdir(config.training_path) if
                      file.endswith('.pth') and file != 'model_weights_best.pth']
@@ -739,6 +739,8 @@ def train_cifar(rank, world_size, config, console):
 
         saved_weights_file = os.path.join(config.training_path, latest_pth_file)
         state_dict = torch.load(saved_weights_file, map_location=device)
+
+        fine_tune = config.training_contrastive.fine_tune
 
         if world_size > 1:
             new_state_dict = state_dict
@@ -750,6 +752,22 @@ def train_cifar(rank, world_size, config, console):
         model.to(device)
     else:
         latest_epoch = 0
+
+    if config.training_contrastive.fine_tune:
+        base_model = model.module if hasattr(model, 'module') else model
+
+        # Freeze backbone
+        for param in base_model.encoder.parameters():
+            param.requires_grad = False
+            early_layers = False
+            late_layers = False
+
+        # Unfreeze head and fc
+        for param in base_model.head.parameters():
+            param.requires_grad = True
+
+        for param in base_model.fc.parameters():
+            param.requires_grad = True
 
     # Loss criterion and optimizer
     cls_num_list = train_dataset.get_cls_num_list()
@@ -821,9 +839,26 @@ def train_cifar(rank, world_size, config, console):
                                                  leaf_path_map=leaf_path_map,
                                                  num_nodes=num_nodes).to(device)
 
-    optimizer = torch.optim.SGD(model.parameters(), config.training_contrastive.learning_rate,
-                                momentum=config.training_contrastive.momentum,
-                                weight_decay=config.training_contrastive.weight_decay)
+    if not config.training_contrastive.fine_tune:
+        optimizer = torch.optim.SGD(model.parameters(), config.training_contrastive.learning_rate,
+                                    momentum=config.training_contrastive.momentum,
+                                    weight_decay=config.training_contrastive.weight_decay)
+    else:
+        base_lr = config.training_contrastive.learning_rate
+        base_lr_l4 = 0.10  # was base_lr / 10
+        base_lr_low = 0.01  # was base_lr / 100
+
+        optimizer = torch.optim.SGD([
+            {"params": base_model.fc.parameters(), "lr": base_lr, "base_lr": base_lr},
+            {"params": base_model.encoder.layer4.parameters(), "lr": base_lr_l4, "base_lr": base_lr_l4},
+            {"params": list(base_model.encoder.layer1.parameters()) +
+                       list(base_model.encoder.layer2.parameters()) +
+                       list(base_model.encoder.layer3.parameters()),
+             "lr": base_lr_low, "base_lr": base_lr_low}
+        ],
+            momentum=config.training_contrastive.momentum,
+            weight_decay=config.training_contrastive.weight_decay)
+
 
     # if config.training_contrastive.path_pretrain:
     #     proco_loss.reload_memory()
@@ -840,7 +875,27 @@ def train_cifar(rank, world_size, config, console):
         if is_distributed and sampler_train is not None:
             sampler_train.set_epoch(epoch)
 
-        adjust_lr(optimizer, epoch, config)
+        adjust_lr(optimizer, epoch, config, fine_tune_start_epoch)
+
+        if (
+                config.training_contrastive.fine_tune
+                and epoch >= (config.training_contrastive.num_epoch - 8)
+                and not late_layers
+        ):
+            print(f"Epoch {epoch} - Unfreezing last layer in encoder (backbone).")
+            for param in base_model.encoder.layer4.parameters():
+                param.requires_grad = True
+            late_layers = True
+
+        if (
+                config.training_contrastive.fine_tune
+                and epoch >= (config.training_contrastive.num_epoch - 3)
+                and not early_layers
+        ):
+            print(f"Epoch {epoch} - Unfreezing whole backbone.")
+            for param in base_model.encoder.parameters():
+                param.requires_grad = True
+            early_layers = True
 
         if epoch < config.training_contrastive.twostage_epoch:
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
