@@ -850,10 +850,9 @@ def train_cifar(rank, world_size, config, console):
 
         optimizer = torch.optim.SGD([
             {"params": base_model.fc.parameters(), "lr": base_lr, "base_lr": base_lr},
-            {"params": base_model.encoder.layer4.parameters(), "lr": base_lr_l4, "base_lr": base_lr_l4},
+            {"params": base_model.encoder.layer3.parameters(), "lr": base_lr_l4, "base_lr": base_lr_l4},
             {"params": list(base_model.encoder.layer1.parameters()) +
-                       list(base_model.encoder.layer2.parameters()) +
-                       list(base_model.encoder.layer3.parameters()),
+                       list(base_model.encoder.layer2.parameters()),
              "lr": base_lr_low, "base_lr": base_lr_low}
         ],
             momentum=config.training_contrastive.momentum,
@@ -883,7 +882,7 @@ def train_cifar(rank, world_size, config, console):
                 and not late_layers
         ):
             print(f"Epoch {epoch} - Unfreezing last layer in encoder (backbone).")
-            for param in base_model.encoder.layer4.parameters():
+            for param in base_model.encoder.layer3.parameters():
                 param.requires_grad = True
             late_layers = True
 
