@@ -1402,259 +1402,288 @@ def cal_feats(model, train_loader, leaf_to_superclass_dict, config):
     return superclass_feats
 
 
+def _safe_log_resps(log_prob):  # [N,K]
+    # Handles rows with all -inf => sets uniform responsibilities
+    m = np.max(log_prob, axis=1, keepdims=True)
+    m[~np.isfinite(m)] = 0.0  # if entire row is -inf, max is -inf → fix to 0 for stability
+    shifted = log_prob - m
+    exp_shifted = np.exp(shifted)
+    sum_exp = np.sum(exp_shifted, axis=1, keepdims=True)
+
+    # rows where all entries were -inf → sum_exp == 0
+    zero_row = (sum_exp <= 0.0).ravel()
+    # normal rows
+    lse = m + np.log(np.clip(sum_exp, 1e-300, None))
+    log_resps = shifted - np.log(np.clip(sum_exp, 1e-300, None))
+
+    if np.any(zero_row):
+        K = log_prob.shape[1]
+        log_resps[zero_row, :] = -np.log(K)
+
+    return log_resps
+
+
 def _posterior_and_entropy(X, params):
     """
-    Returns responsibilities, hard labels, and cluster-entropy
-    needed for ICL.
+    Returns responsibilities, log-responsibilities, and total cluster-entropy.
+    Safe even if some rows have all -inf log-prob.
     """
-    pi   = np.array([p[0] for p in params])
-    mu   = np.stack([p[1] for p in params], axis=0)
-    kappa= np.array([p[2] for p in params])
+    if params is None or len(params) == 0:
+        # fall back to uniform 1-cluster responsibilities
+        N = X.shape[0]
+        resp = np.ones((N, 1), dtype=np.float64)
+        log_resp = np.zeros_like(resp)
+        entropy = 0.0
+        return resp, log_resp, entropy
 
-    log_prob = log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32)
-    log_resp = log_prob - logsumexp(log_prob, axis=1, keepdims=True)
-    resp     = np.exp(log_resp)
-    entropy  = -(resp * log_resp).sum()           # Σ_i Σ_j r_ij log r_ij
+    pi = np.array([p[0] for p in params], dtype=np.float64)
+    mu = np.stack([p[1] for p in params], axis=0).astype(np.float64)
+    kappa = np.array([p[2] for p in params], dtype=np.float64)
+
+    log_prob = log_vmf_pdf(X, mu, kappa) + np.log(np.clip(pi, 1e-32, None))
+    log_resp = _safe_log_resps(log_prob)          # [N,K]
+    resp = np.exp(log_resp)
+
+    # total entropy (optionally divide by N if you prefer average)
+    entropy = -np.sum(resp * log_resp)
     return resp, log_resp, entropy
 
 
 def _loglik_vmf(X, params):
-    """total log-likelihood of X given mixture params list."""
-    pi   = np.array([p[0] for p in params])
-    mu   = np.stack([p[1] for p in params], axis=0)
-    kappa= np.array([p[2] for p in params])
+    """Total log-likelihood of X under a mixture; returns -inf if degenerate."""
+    if params is None or len(params) == 0:
+        return -np.inf
 
-    log_prob = log_vmf_pdf(X, mu, kappa) + np.log(pi + 1e-32)
-    return logsumexp(log_prob, axis=1).sum()
+    pi = np.array([p[0] for p in params], dtype=np.float64)
+    mu = np.stack([p[1] for p in params], axis=0).astype(np.float64)
+    kappa = np.array([p[2] for p in params], dtype=np.float64)
+
+    log_prob = log_vmf_pdf(X, mu, kappa) + np.log(np.clip(pi, 1e-32, None))
+    lse = logsumexp(log_prob, axis=1)  # [N]
+    if not np.all(np.isfinite(lse)):
+        return -np.inf
+    return float(np.sum(lse))
 
 
-def find_best_vmf_mixture_bic(feats_sc, k_max=5, delta_min=100):
-    """
-    feats_sc: shape [N_sc, feat_dim]
-    returns:
-        best_k: the number of prototypes with the minimal BIC
-        best_params: a list of (pi_j, mu_j, kappa_j) for j=1..best_k
-    """
-    min_improvement = delta_min
-    best_k = 1
-    best_bic = float('inf')
-    best_params = None
-
-    N_sc, dim = feats_sc.shape
-
-    prev_bic = None
-    prev_params = None
-
-    for k in range(1, k_max + 1):
-        # 1) Fit a mixture-of-vMF with k components to feats_sc
-        mixture_params_k = fit_vmf_mixture(feats_sc, k)
-
-        # 2) compute log-likelihood: sum_{i=1..N_sc} log( sum_{j=1..k} pi_j * vmf_pdf(...) )
-        logL = 0.0
-        for i in range(N_sc):
-            x = feats_sc[i]
-            pdf_sum = 0.0
-            for (pi_j, mu_j, kappa_j) in mixture_params_k:
-                pdf_sum += pi_j * vmf_pdf(x, mu_j, kappa_j)
-            logL += np.log(pdf_sum + 1e-20)
-
-        # 3) compute param count
-        #   each component: (dim-1) for mu, 1 for kappa, total k comps => k*(dim)
-        #   plus (k-1) for pi_j. So total = k*(dim) + (k-1).
-        #   or you can do k*(dim -1) + k + (k-1), etc.
-        #   You can approximate it as:
-        param_count = k * (dim) + (k - 1)
-
-        # 4) BIC = -2 * logL + param_count * ln(N_sc)
-        bic_value = -2.0 * logL + param_count * np.log(N_sc)
-
-        if k == 1:
-            best_k = 1
-            best_params = mixture_params_k
-            best_bic = bic_value
-            prev_bic = bic_value
-            prev_params = mixture_params_k
-        else:
-            delta_bic = prev_bic - bic_value
-            print('in k = ' + str(k) + '   , the delta is:  ' + str(delta_bic))
-
-            if delta_bic < min_improvement:
-                best_k = k - 1
-                best_params = prev_params
-                best_bic = prev_bic
-                break
-            else:
-                best_k = k
-                best_params = mixture_params_k
-                best_bic = bic_value
-                prev_bic = bic_value
-                prev_params = mixture_params_k
-
-        # if bic_value < best_bic:
-        #     best_bic = bic_value
-        #     best_k = k
-        #     best_params = mixture_params_k
-
-    return best_k, best_params
+def _fit_single_component_fallback(X):
+    X = np.asarray(X, dtype=np.float64)
+    N, D = X.shape
+    if N == 0:
+        mu = np.zeros(D, dtype=np.float64); mu[0] = 1.0
+        return [(1.0, mu, 1.0)]
+    m = X.mean(axis=0)
+    R = np.linalg.norm(m) + 1e-12
+    mu = m / R
+    num = R * (D - R*R)
+    den = max(1e-12, (1.0 - R*R))
+    kappa = max(1e-3, num / den)
+    return [(1.0, mu, float(kappa))]
 
 
 def select_vmf_k(
-        X,
-        k_max      = 5,
-        criterion  = "BIC",   #  "AIC", "BIC", or "ICL"
-        restarts   = 5,
-        delta_stop = 10.0
-    ):
+    X,
+    k_max=5,
+    criterion="BIC",   # "AIC", "BIC", or "ICL"
+    restarts=5,
+    delta_stop=10.0
+):
     """
-    X         : [N,D] unit-norm features of one superclass
-    criterion : which score to minimise: 'AIC', 'BIC', or 'ICL'
-    returns   : best_k, best_params
+    X : [N,D] unit-norm features for one superclass
+    returns: best_k, best_params (list of (pi_j, mu_j, kappa_j)), never None
     """
+    X = np.asarray(X, dtype=np.float64)
     N, D = X.shape
-    best_k, best_score, best_params = 1, np.inf, None
-    prev_score = np.inf
+    if N < 2:
+        return 1, _fit_single_component_fallback(X)
 
-    for k in range(1, k_max + 1):
+    # ---- baseline k=1 ----
+    params_1 = fit_vmf_mixture(X, 1)
+    if params_1 is None:
+        params_1 = _fit_single_component_fallback(X)
+    logL_1 = _loglik_vmf(X, params_1)
+    if not np.isfinite(logL_1):
+        params_1 = _fit_single_component_fallback(X)
+        logL_1 = _loglik_vmf(X, params_1)
 
-        # ---------- multiple EM restarts --------------------------------
+    p_free_1 = 1 * D + (1 - 1)
+    if criterion.upper() == "AIC":
+        score_1 = -2.0 * logL_1 + 2 * p_free_1
+    else:
+        score_1 = -2.0 * logL_1 + p_free_1 * np.log(max(N, 2))
+        if criterion.upper() == "ICL":
+            log_prob_1 = log_vmf_pdf(X, np.stack([p[1] for p in params_1]), np.array([p[2] for p in params_1]))
+            _, _, h_1 = _posterior_and_entropy(X, params_1)
+            score_1 += 2.0 * h_1
+
+    best_k, best_score, best_params = 1, score_1, params_1
+    prev_score = score_1
+
+    # ---- try k >= 2 ----
+    for k in range(2, k_max + 1):
+        # guard: too few points per component → skip
+        if N < 3 * k:
+            continue
+
         best_logL_k, best_params_k = -np.inf, None
         for _ in range(restarts):
             params_try = fit_vmf_mixture(X, k)
-            logL_try   = _loglik_vmf(X, params_try)       # helper below
-            if logL_try > best_logL_k:
+            if params_try is None:
+                continue
+            logL_try = _loglik_vmf(X, params_try)
+            if np.isfinite(logL_try) and logL_try > best_logL_k:
                 best_logL_k, best_params_k = logL_try, params_try
 
-        # ---------- information criteria --------------------------------
-        p_free = k * (D - 1 + 1) + (k - 1)          # µ (D-1), κ (1), π (k-1)
+        # if EM failed for all restarts, skip this k
+        if best_params_k is None or not np.isfinite(best_logL_k):
+            continue
+
+        p_free = k * D + (k - 1)
         if criterion.upper() == "AIC":
             score = -2.0 * best_logL_k + 2 * p_free
         else:
-            score = -2.0 * best_logL_k + p_free * np.log(N)   # BIC term
+            score = -2.0 * best_logL_k + p_free * np.log(max(N, 2))
             if criterion.upper() == "ICL":
-                # subtract 2 * cluster-entropy term
-                _, _, h = _posterior_and_entropy(X, best_params_k)
-                score += 2.0 * h
+                _, _, h_k = _posterior_and_entropy(X, best_params_k)
+                score += 2.0 * h_k
 
-        # ---------- keep the global minimum -----------------------------
         if score < best_score:
             best_k, best_score, best_params = k, score, best_params_k
 
-        # ---------- optional early-stop ---------------------------------
-        if prev_score - score < delta_stop:
-            break
+        # early-stop only if both finite
+        if np.isfinite(prev_score) and np.isfinite(score):
+            if (prev_score - score) < delta_stop:
+                break
         prev_score = score
 
+    # guarantee non-None
+    if best_params is None or len(best_params) == 0:
+        best_k, best_params = 1, _fit_single_component_fallback(X)
     return best_k, best_params
 
 
-def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
+def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=10.0, criterion="BIC", restarts=10):
     p_star = []
-    mixture_params = {}  # store (pi_j, mu_j, kappa_j) for each j in [1.. best_k]
+    mixture_params = {}
     for sc_idx in range(superclass_num):
-        feats_sc = np.array(superclass_feats[sc_idx])  # shape [N_sc, feat_dim]
-        best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=k_max, delta_min=delta_min)
-        # best_k, best_params = select_vmf_k(
-        #     feats_sc,
-        #     k_max=k_max,
-        #     criterion="BIC",  # or "AIC", "BIC", or "ICL"
-        #     restarts=10,
-        #     delta_stop=delta_min
-        # )
-        p_star.append(best_k)
-        mixture_params[sc_idx] = best_params
-
+        feats_sc = np.asarray(superclass_feats[sc_idx], dtype=np.float64)
+        # Ensure unit norm (defensive)
+        norms = np.linalg.norm(feats_sc, axis=1, keepdims=True) + 1e-12
+        feats_sc = feats_sc / norms
+        # best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=k_max, delta_min=delta_min)
+        best_k, best_params = select_vmf_k(
+            feats_sc,
+            k_max=k_max,
+            criterion=criterion,
+            restarts=restarts,
+            delta_stop=delta_min
+        )
+        p_star.append(int(best_k))
+        mixture_params[sc_idx] = best_params  # guaranteed non-None
     return p_star, mixture_params
 
 
-def fit_vmf_mixture(X, k, max_iter=50):
+
+def fit_vmf_mixture(X, k, max_iter=50, min_count=1e-6):
     """
-    X : [N, D] (unit vectors)
-    Returns list [(pi_j, mu_j, kappa_j)] length k
+    X : [N, D] (assumed unit vectors)
+    Returns list [(pi_j, mu_j, kappa_j)] length k, or None if fails.
     """
+    X = np.asarray(X, dtype=np.float64)
     N, D = X.shape
-    # ----- initialisation -------------------------------------------------
+    if N < k or k <= 0:
+        return None
+
+    # ---- init ----
     rng = np.random.default_rng()
-    mu = X[rng.choice(N, size=k, replace=False)]           # K-means++ style
-    kappa = np.full(k, D, dtype=np.float64)
+    # if duplicates possible, allow replace but deduplicate later
+    init_idx = rng.choice(N, size=k, replace=False) if N >= k else rng.choice(N, size=k, replace=True)
+    mu = X[init_idx].copy()
+    # re-normalize means defensively
+    mu /= (np.linalg.norm(mu, axis=1, keepdims=True) + 1e-12)
+    kappa = np.full(k, max(1.0, D), dtype=np.float64)
     pi = np.full(k, 1.0 / k, dtype=np.float64)
 
     for _ in range(max_iter):
-        # ---------- E-step ----------------------------------------------
-        log_priors = np.log(pi + 1e-32)                    # [K]
-        log_prob = log_vmf_pdf(X, mu, kappa) + log_priors  # [N, K]
-        log_resps = log_prob - logsumexp(log_prob, axis=1, keepdims=True)
-        R = np.exp(log_resps)                              # [N, K]
+        # E-step
+        log_priors = np.log(np.clip(pi, 1e-32, None))
+        log_prob = log_vmf_pdf(X, mu, kappa) + log_priors  # [N,K]
+        log_resps = _safe_log_resps(log_prob)
+        R = np.exp(log_resps)  # [N,K]
 
-        # ---------- M-step ----------------------------------------------
-        Nj = R.sum(axis=0) + 1e-12                         # [K]
-        pi = Nj / N
+        # M-step
+        Nj = R.sum(axis=0)  # [K]
+        if np.any(~np.isfinite(Nj)):
+            return None
 
-        # update mu and kappa component-wise
-        weighted_sum = R.T @ X                             # [K, D]
-        mu_norm = np.linalg.norm(weighted_sum, axis=1, keepdims=True) + 1e-32
-        mu = weighted_sum / mu_norm                       # [K, D]
+        # handle empty/near-empty components by soft reset
+        dead = Nj < min_count
+        if np.any(dead):
+            # re-seed dead components to random points
+            for j in np.where(dead)[0]:
+                rnd = X[rng.integers(N)]
+                mu[j] = rnd / (np.linalg.norm(rnd) + 1e-12)
+                Nj[j] = min_count
+                pi[j] = min_count / max(N, 1.0)
+            # renormalize pi
+            pi = pi / np.sum(pi)
 
-        R_bar = (mu_norm.squeeze() / Nj).clip(1e-6, 1 - 1e-6)
-        kappa = (R_bar * (D - R_bar**2)) / (1 - R_bar**2)  # approximation
+        pi = Nj / max(N, 1.0)
 
-    return [(pi[j], mu[j], kappa[j]) for j in range(k)]
+        weighted_sum = R.T @ X  # [K,D]
+        mu_norm = np.linalg.norm(weighted_sum, axis=1, keepdims=True) + 1e-12
+        mu = weighted_sum / mu_norm
+
+        R_bar = (mu_norm.squeeze() / Nj).clip(1e-6, 1 - 1e-6)  # [K]
+        kappa = _clip_kappa((R_bar * (D - R_bar**2)) / (1 - R_bar**2))
+
+        # (optional) break on tiny changes in objective/params
+
+    # final sanity check
+    params = [(float(pi[j]), mu[j].astype(np.float64), float(kappa[j])) for j in range(k)]
+    if not np.isfinite(_loglik_vmf(X, params)):
+        return None
+    return params
+
+
+def _clip_kappa(kappa):
+    # prevent overflow/underflow in Bessel evaluations and exp terms
+    return np.clip(kappa, 1e-6, 1e6).astype(np.float64)
 
 
 def log_c_p(kappa, dim):
+    from scipy.special import ive
     """
-    log of the vMF normalisation constant C_d(kappa) =
-    kappa^{d/2-1} / [(2π)^{d/2} I_{d/2-1}(kappa)]
+    -log C_d(kappa).  Uses scaled Bessel to avoid overflow:
+    I_nu(kappa) = exp(kappa) * ive(nu, kappa).
     """
-    # Use log-form to avoid overflow/underflow
+    kappa = _clip_kappa(np.asarray(kappa, dtype=np.float64))
     nu = dim / 2.0 - 1.0
-    log_iv = np.log(iv(nu, kappa) + 1e-300)
+    # log I_nu = log(ive) + kappa   (since ive is exp(-kappa) * I_nu)
+    log_iv = np.log(ive(nu, kappa) + 1e-300) + kappa
     return (nu * np.log(kappa + 1e-16)) - (dim / 2.0) * np.log(2 * np.pi) - log_iv
 
 
 def log_vmf_pdf(x, mu, kappa):
     """
-    x : [N, D]  (unit-norm)
-    mu: [K, D]  (unit-norm)
-    kappa: [K]  (>=0)
-    returns log p(x|mu,kappa)   shape [N, K]
+    x : [N, D] unit-norm
+    mu: [K, D] unit-norm
+    kappa: [K]
+    returns log p(x | mu, kappa) : [N, K]
     """
-    # cosine similarity matrix  [N, K]
-    cos = x @ mu.T
-    log_norm = log_c_p(kappa, x.shape[1])          # [K]
+    x = np.asarray(x, dtype=np.float64)
+    mu = np.asarray(mu, dtype=np.float64)
+    kappa = _clip_kappa(np.asarray(kappa, dtype=np.float64))
+
+    # robust cosine similarities
+    cos = np.clip(x @ mu.T, -1.0, 1.0)  # [N,K]
+    log_norm = log_c_p(kappa, x.shape[1])  # [K]
     return cos * kappa[None, :] + log_norm[None, :]
 
 
-def vmf_pdf(x, mu, kappa):
-    """
-    x, mu: numpy arrays of shape [dim], both assumed unit norm.
-    kappa: float
-    returns the PDF value as a float.
-    """
-    dotval = np.dot(x, mu)  # x, mu in R^dim
-    # log_val = kappa * dotval - logC_p(kappa, len(x))
-    log_val = kappa * dotval + logC_p(kappa, len(x))
-    return np.exp(log_val)
 
 
-def logC_p(kappa, dim):
-    """
-    Approximate or compute log of the normalization constant C_d(kappa).
-    For large kappa, or dimension not too big, you can do a piecewise approach.
-    Or call SciPy if available.
-    """
-    # If you have scip.special.ive, you can do:
-    #   val = ive(dim/2 - 1, kappa)  # i_{nu}(kappa)
-    #   logC = np.log(val) + kappa - (dim/2 - 1)*np.log(kappa+1e-12)
-    # Return that. Example:
-    import math
-    from scipy.special import ive
 
-    if kappa < 1e-8:
-        # near zero, logC_p ~ -log(Surface of sphere), roughly
-        # e.g. log((2*pi)^(d/2) / Gamma(d/2)) ...
-        # For simplicity, return a constant. It's not critical for small kappa.
-        return (dim/2)*math.log(2*math.pi)  # crude
-    val = ive(dim/2 - 1, kappa)
-    val = max(val, 1e-300)
-    logC = math.log(val) + kappa - (dim/2 - 1)*math.log(kappa+1e-12)
-    return logC
+
+
+
+
