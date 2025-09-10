@@ -1428,6 +1428,76 @@ def _loglik_vmf(X, params):
     return logsumexp(log_prob, axis=1).sum()
 
 
+def find_best_vmf_mixture_bic(feats_sc, k_max=5, delta_min=100):
+    """
+    feats_sc: shape [N_sc, feat_dim]
+    returns:
+        best_k: the number of prototypes with the minimal BIC
+        best_params: a list of (pi_j, mu_j, kappa_j) for j=1..best_k
+    """
+    min_improvement = delta_min
+    best_k = 1
+    best_bic = float('inf')
+    best_params = None
+
+    N_sc, dim = feats_sc.shape
+
+    prev_bic = None
+    prev_params = None
+
+    for k in range(1, k_max + 1):
+        # 1) Fit a mixture-of-vMF with k components to feats_sc
+        mixture_params_k = fit_vmf_mixture(feats_sc, k)
+
+        # 2) compute log-likelihood: sum_{i=1..N_sc} log( sum_{j=1..k} pi_j * vmf_pdf(...) )
+        logL = 0.0
+        for i in range(N_sc):
+            x = feats_sc[i]
+            pdf_sum = 0.0
+            for (pi_j, mu_j, kappa_j) in mixture_params_k:
+                pdf_sum += pi_j * log_vmf_pdf(x, mu_j, kappa_j)
+            logL += np.log(pdf_sum + 1e-20)
+
+        # 3) compute param count
+        #   each component: (dim-1) for mu, 1 for kappa, total k comps => k*(dim)
+        #   plus (k-1) for pi_j. So total = k*(dim) + (k-1).
+        #   or you can do k*(dim -1) + k + (k-1), etc.
+        #   You can approximate it as:
+        param_count = k * (dim) + (k - 1)
+
+        # 4) BIC = -2 * logL + param_count * ln(N_sc)
+        bic_value = -2.0 * logL + param_count * np.log(N_sc)
+
+        if k == 1:
+            best_k = 1
+            best_params = mixture_params_k
+            best_bic = bic_value
+            prev_bic = bic_value
+            prev_params = mixture_params_k
+        else:
+            delta_bic = prev_bic - bic_value
+            print('in k = ' + str(k) + '   , the delta is:  ' + str(delta_bic))
+
+            if delta_bic < min_improvement:
+                best_k = k - 1
+                best_params = prev_params
+                best_bic = prev_bic
+                break
+            else:
+                best_k = k
+                best_params = mixture_params_k
+                best_bic = bic_value
+                prev_bic = bic_value
+                prev_params = mixture_params_k
+
+        # if bic_value < best_bic:
+        #     best_bic = bic_value
+        #     best_k = k
+        #     best_params = mixture_params_k
+
+    return best_k, best_params
+
+
 def select_vmf_k(
         X,
         k_max      = 5,
@@ -1476,19 +1546,20 @@ def select_vmf_k(
 
     return best_k, best_params
 
+
 def cal_params(superclass_feats, superclass_num, k_max=5, delta_min=100):
     p_star = []
     mixture_params = {}  # store (pi_j, mu_j, kappa_j) for each j in [1.. best_k]
     for sc_idx in range(superclass_num):
         feats_sc = np.array(superclass_feats[sc_idx])  # shape [N_sc, feat_dim]
-        # best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=k_max, delta_min=delta_min)
-        best_k, best_params = select_vmf_k(
-            feats_sc,
-            k_max=k_max,
-            criterion="BIC",  # or "AIC", "BIC", or "ICL"
-            restarts=10,
-            delta_stop=delta_min
-        )
+        best_k, best_params = find_best_vmf_mixture_bic(feats_sc, k_max=k_max, delta_min=delta_min)
+        # best_k, best_params = select_vmf_k(
+        #     feats_sc,
+        #     k_max=k_max,
+        #     criterion="BIC",  # or "AIC", "BIC", or "ICL"
+        #     restarts=10,
+        #     delta_stop=delta_min
+        # )
         p_star.append(best_k)
         mixture_params[sc_idx] = best_params
 
