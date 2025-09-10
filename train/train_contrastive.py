@@ -1455,7 +1455,7 @@ def find_best_vmf_mixture_bic(feats_sc, k_max=5, delta_min=100):
             x = feats_sc[i]
             pdf_sum = 0.0
             for (pi_j, mu_j, kappa_j) in mixture_params_k:
-                pdf_sum += pi_j * log_vmf_pdf(x, mu_j, kappa_j)
+                pdf_sum += pi_j * vmf_pdf(x, mu_j, kappa_j)
             logL += np.log(pdf_sum + 1e-20)
 
         # 3) compute param count
@@ -1622,3 +1622,39 @@ def log_vmf_pdf(x, mu, kappa):
     cos = x @ mu.T
     log_norm = log_c_p(kappa, x.shape[1])          # [K]
     return cos * kappa[None, :] + log_norm[None, :]
+
+
+def vmf_pdf(x, mu, kappa):
+    """
+    x, mu: numpy arrays of shape [dim], both assumed unit norm.
+    kappa: float
+    returns the PDF value as a float.
+    """
+    dotval = np.dot(x, mu)  # x, mu in R^dim
+    # log_val = kappa * dotval - logC_p(kappa, len(x))
+    log_val = kappa * dotval + logC_p(kappa, len(x))
+    return np.exp(log_val)
+
+
+def logC_p(kappa, dim):
+    """
+    Approximate or compute log of the normalization constant C_d(kappa).
+    For large kappa, or dimension not too big, you can do a piecewise approach.
+    Or call SciPy if available.
+    """
+    # If you have scip.special.ive, you can do:
+    #   val = ive(dim/2 - 1, kappa)  # i_{nu}(kappa)
+    #   logC = np.log(val) + kappa - (dim/2 - 1)*np.log(kappa+1e-12)
+    # Return that. Example:
+    import math
+    from scipy.special import ive
+
+    if kappa < 1e-8:
+        # near zero, logC_p ~ -log(Surface of sphere), roughly
+        # e.g. log((2*pi)^(d/2) / Gamma(d/2)) ...
+        # For simplicity, return a constant. It's not critical for small kappa.
+        return (dim/2)*math.log(2*math.pi)  # crude
+    val = ive(dim/2 - 1, kappa)
+    val = max(val, 1e-300)
+    logC = math.log(val) + kappa - (dim/2 - 1)*math.log(kappa+1e-12)
+    return logC
