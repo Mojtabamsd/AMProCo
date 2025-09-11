@@ -431,6 +431,8 @@ def train_uvp(rank, world_size, config, console):
 
                 console.info('super class names   :' + str(super_class_names))
                 console.info('P*   :' + str(p_star))
+                with open(prototypes_path, "w") as f:
+                    f.write(str(p_star))
 
                 offset = train_dataset.num_class
                 superclass_to_protos = {}
