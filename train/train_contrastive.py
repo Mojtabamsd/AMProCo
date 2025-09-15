@@ -1258,8 +1258,9 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
 
         all_probs, all_preds = F.softmax(total_logits, dim=1).max(dim=1)
         if type(train_loader.dataset).__name__ == 'UvpDataset':
-            many_acc_top1, median_acc_top1, low_acc_top1, acc1 = shot_f1(all_preds, total_labels, train_loader,
-                                                                         acc_per_cls=False)
+            many_acc_top1, median_acc_top1, low_acc_top1, overall_f1 = shot_f1(all_preds, total_labels, train_loader,
+                                                                               acc_per_cls=False)
+            acc1 = overall_f1 * 100
         else:
             many_acc_top1, median_acc_top1, low_acc_top1 = shot_acc(all_preds, total_labels, train_loader,
                                                                     acc_per_cls=False)
