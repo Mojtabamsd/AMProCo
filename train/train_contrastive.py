@@ -1254,16 +1254,16 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
 
         ce_loss_all.update(ce_loss.item(), 1)
         top1.update(acc1[0].item(), 1)
+        acc1 = top1.avg
 
         all_probs, all_preds = F.softmax(total_logits, dim=1).max(dim=1)
         if type(train_loader.dataset).__name__ == 'UvpDataset':
-            many_acc_top1, median_acc_top1, low_acc_top1 = shot_f1(all_preds, total_labels, train_loader,
-                                                                   acc_per_cls=False)
+            many_acc_top1, median_acc_top1, low_acc_top1, acc1 = shot_f1(all_preds, total_labels, train_loader,
+                                                                         acc_per_cls=False)
         else:
-            many_acc_top1, median_acc_top1, low_acc_top1, top1 = shot_acc(all_preds, total_labels, train_loader,
-                                                                              acc_per_cls=False)
+            many_acc_top1, median_acc_top1, low_acc_top1 = shot_acc(all_preds, total_labels, train_loader,
+                                                                    acc_per_cls=False)
 
-        acc1 = top1.avg
         many = many_acc_top1 * 100
         med = median_acc_top1 * 100
         few = low_acc_top1 * 100
