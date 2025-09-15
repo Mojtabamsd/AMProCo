@@ -21,7 +21,7 @@ import pandas as pd
 from torchvision.transforms import RandomHorizontalFlip, RandomRotation, RandomAffine, RandomResizedCrop, \
     ColorJitter, RandomGrayscale, RandomPerspective, RandomVerticalFlip
 from tools.augmentation import GaussianNoise, ResizeAndPad
-from models.loss import LogitAdjust
+from models.loss import LogitAdjust, BalSCL
 from models.proco import ProCoLoss
 from models.amproco import HierarchicalProCoWrapper
 from dataset.cifar import CIFAR100_SUPERCLASSES
@@ -316,6 +316,13 @@ def train_uvp(rank, world_size, config, console):
 
     if config.training_contrastive.loss == 'proco':
         criterion_ce = LogitAdjust(cls_num_list, device=device)
+        criterion_scl = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
+                                  temperature=config.training_contrastive.temp,
+                                  num_classes=train_dataset.num_class,
+                                  device=device)
+
+    elif config.training_contrastive.loss == 'bcl':
+        criterion_ce = BalSCL(cls_num_list, temperature=config.training_contrastive.temp, device=device)
         criterion_scl = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
                                   temperature=config.training_contrastive.temp,
                                   num_classes=train_dataset.num_class,

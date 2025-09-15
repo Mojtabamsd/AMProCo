@@ -43,7 +43,7 @@ training_contrastive:
   num_epoch: 90
   warmup_epoch: 5 # warmup epochs
   twostage_epoch: 60 # two-stage training epoch for running adaptive multi-prototype stage
-  loss: 'amproco' # choose 'proco' or 'amproco'
+  loss: 'amproco' # choose 'proco' or 'amproco' or 'bcl'
   feat_dim: 1024 # feature dimension of mlp head
   temp: 0.1  # scalar temperature for contrastive learning
   use_norm: True # cosine classifier.
