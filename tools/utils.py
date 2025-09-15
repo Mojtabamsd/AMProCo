@@ -257,3 +257,80 @@ def shot_acc(preds, labels, train_data, many_shot_thr=100, low_shot_thr=20, acc_
         return np.mean(many_shot), np.mean(median_shot), np.mean(low_shot), class_accs
     else:
         return np.mean(many_shot), np.mean(median_shot), np.mean(low_shot)
+
+
+def shot_f1(preds, labels, train_data, many_shot_thr=100, low_shot_thr=20, acc_per_cls=False):
+    """
+    Compute shot-wise F1-scores (many/median/low) based on training set frequency.
+
+    Args:
+        preds: np.ndarray or torch.Tensor of predicted class indices (shape [N])
+        labels: np.ndarray or torch.Tensor of true class indices (shape [N])
+        train_data: dataset or array used only to count training samples per class
+        many_shot_thr: classes with > this many training samples are "many-shot"
+        low_shot_thr: classes with < this many training samples are "low-shot"
+        acc_per_cls: if True, also return per-class F1 scores (named retained for compatibility)
+
+    Returns:
+        If acc_per_cls is False:
+            (many_f1, median_f1, low_f1)
+        If acc_per_cls is True:
+            (many_f1, median_f1, low_f1, class_f1s_list)
+    """
+    # --- Determine training labels to define shot bins ---
+    if type(train_data.dataset).__name__ == 'UvpDataset':
+        training_labels = np.array(
+            train_data.dataset.data_frame['label'].map(train_data.dataset.class_to_idx)
+        )
+    else:
+        if isinstance(train_data, np.ndarray):
+            training_labels = np.array(train_data).astype(int)
+        else:
+            training_labels = np.array(train_data.dataset.labels).astype(int)
+
+    # --- Ensure numpy arrays for preds/labels ---
+    if isinstance(preds, torch.Tensor):
+        preds = preds.detach().cpu().numpy()
+    elif not isinstance(preds, np.ndarray):
+        raise TypeError(f'Type ({type(preds)}) of preds not supported')
+
+    if isinstance(labels, torch.Tensor):
+        labels = labels.detach().cpu().numpy()
+    elif not isinstance(labels, np.ndarray):
+        raise TypeError(f'Type ({type(labels)}) of labels not supported')
+
+    # --- Per-class counts on training set (for binning) ---
+    unique_test_classes = np.unique(labels)
+    train_class_count = []
+    for c in unique_test_classes:
+        train_class_count.append(int((training_labels == c).sum()))
+
+    # --- Compute per-class F1 on the test set ---
+    class_f1s = []
+    for c in unique_test_classes:
+        tp = np.sum((preds == c) & (labels == c))
+        fp = np.sum((preds == c) & (labels != c))
+        fn = np.sum((preds != c) & (labels == c))
+        denom = (2 * tp + fp + fn)
+        f1_c = (2 * tp / denom) if denom > 0 else 0.0
+        class_f1s.append(f1_c)
+
+    # --- Bin classes by shot frequency and average F1 within each bin ---
+    many_shot, median_shot, low_shot = [], [], []
+    for count, f1 in zip(train_class_count, class_f1s):
+        if count > many_shot_thr:
+            many_shot.append(f1)
+        elif count < low_shot_thr:
+            low_shot.append(f1)
+        else:
+            median_shot.append(f1)
+
+    # Handle empty bins (avoid NaN)
+    if len(many_shot) == 0: many_shot = [0.0]
+    if len(median_shot) == 0: median_shot = [0.0]
+    if len(low_shot) == 0: low_shot = [0.0]
+
+    if acc_per_cls:
+        return float(np.mean(many_shot)), float(np.mean(median_shot)), float(np.mean(low_shot)), class_f1s
+    else:
+        return float(np.mean(many_shot)), float(np.mean(median_shot)), float(np.mean(low_shot))

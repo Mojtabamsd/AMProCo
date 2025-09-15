@@ -14,7 +14,7 @@ import os
 import shutil
 import torch
 import torch.distributed as dist
-from tools.utils import report_to_df, plot_loss, shot_acc
+from tools.utils import report_to_df, plot_loss, shot_acc, shot_f1
 from tools.randaugment import rand_augment_transform
 from sklearn.metrics import classification_report, confusion_matrix
 import pandas as pd
@@ -1256,8 +1256,13 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
         top1.update(acc1[0].item(), 1)
 
         all_probs, all_preds = F.softmax(total_logits, dim=1).max(dim=1)
-        many_acc_top1, median_acc_top1, low_acc_top1 = shot_acc(all_preds, total_labels, train_loader,
-                                                                acc_per_cls=False)
+        if type(train_loader.dataset).__name__ == 'UvpDataset':
+            many_acc_top1, median_acc_top1, low_acc_top1 = shot_f1(all_preds, total_labels, train_loader,
+                                                                   acc_per_cls=False)
+        else:
+            many_acc_top1, median_acc_top1, low_acc_top1 = shot_acc(all_preds, total_labels, train_loader,
+                                                                    acc_per_cls=False)
+
         acc1 = top1.avg
         many = many_acc_top1 * 100
         med = median_acc_top1 * 100
