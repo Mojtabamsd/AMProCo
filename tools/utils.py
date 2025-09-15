@@ -333,4 +333,4 @@ def shot_f1(preds, labels, train_data, many_shot_thr=100, low_shot_thr=20, acc_p
     if acc_per_cls:
         return float(np.mean(many_shot)), float(np.mean(median_shot)), float(np.mean(low_shot)), class_f1s
     else:
-        return float(np.mean(many_shot)), float(np.mean(median_shot)), float(np.mean(low_shot))
+        return float(np.mean(many_shot)), float(np.mean(median_shot)), float(np.mean(low_shot)), float(np.mean(class_f1s))

@@ -1260,8 +1260,8 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
             many_acc_top1, median_acc_top1, low_acc_top1 = shot_f1(all_preds, total_labels, train_loader,
                                                                    acc_per_cls=False)
         else:
-            many_acc_top1, median_acc_top1, low_acc_top1 = shot_acc(all_preds, total_labels, train_loader,
-                                                                    acc_per_cls=False)
+            many_acc_top1, median_acc_top1, low_acc_top1, top1 = shot_acc(all_preds, total_labels, train_loader,
+                                                                              acc_per_cls=False)
 
         acc1 = top1.avg
         many = many_acc_top1 * 100
