@@ -205,13 +205,15 @@ def train_uvp(rank, world_size, config, console):
                                csv_file=config.input_csv_train,
                                transform=transform_train,
                                phase=config.phase,
-                               gray=config.training_contrastive.gray)
+                               gray=config.training_contrastive.gray,
+                               superclass_type=config.training_contrastive.superclass_type)
 
     val_dataset = UvpDataset(root_dir=config.input_folder_test,
                              csv_file=config.input_csv_val,
                              transform=transform_val,
                              phase='test',
-                             gray=config.training_contrastive.gray)
+                             gray=config.training_contrastive.gray,
+                             superclass_type=config.training_contrastive.superclass_type)
 
 
     if is_distributed:
@@ -583,7 +585,8 @@ def train_uvp(rank, world_size, config, console):
                                   csv_file=config.input_csv_test,
                                   transform=transform_val,
                                   phase='test',
-                                  gray=config.training_contrastive.gray)
+                                  gray=config.training_contrastive.gray,
+                                  superclass_type=config.training_contrastive.superclass_type)
 
         test_loader = DataLoader(test_dataset,
                                  batch_size=config.training_contrastive.batch_size,

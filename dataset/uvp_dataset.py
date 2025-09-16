@@ -9,7 +9,7 @@ import numpy as np
 
 
 class UvpDataset(Dataset):
-    def __init__(self, root_dir, csv_file=None, transform=None, phase='train', gray=True,
+    def __init__(self, root_dir, csv_file=None, transform=None, phase='train', gray=True, superclass_type='taxo_20',
                  permitted_formats=None):
         self.root_dir = os.path.join(root_dir, 'output')
         if not os.path.exists(self.root_dir):
@@ -18,6 +18,7 @@ class UvpDataset(Dataset):
         self.transform = transform
         self.phase = phase
         self.gray = gray
+        self.superclass_type = superclass_type
         self.permitted_formats = permitted_formats
 
         if self.csv_file:
@@ -34,7 +35,7 @@ class UvpDataset(Dataset):
         self.num_class = len(unique_labels)
 
         # create superclasses
-        superclass_dict = ren.groupby('superclass')['label'].apply(list).to_dict()
+        superclass_dict = ren.groupby('superclass_' + self.superclass_type)['label'].apply(list).to_dict()
         self.UVP_SUPERCLASSES = [(k, v) for k, v in superclass_dict.items()]
 
     def __len__(self):
