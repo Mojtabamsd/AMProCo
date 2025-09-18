@@ -24,8 +24,8 @@ sampling:
 training_contrastive:
   dataset: 'uvp' # choose uvp or cifar100
   im_factor: 0.01 # only for cifar dataset, choose 0.01, 0.02 or 0.1
-  superclass_type: 'taxo_20' # for uvp dataset choose 'taxo_20' or 'morpho_20', or 'taxo_30' or 'exotaxa_20'
-  superclass_num: 20
+  superclass_type: 'morpho_23' # for uvp dataset choose 'taxo_20' or 'morpho_23', or 'taxo_30' or 'exotaxa_20'
+  superclass_num: 23
   k_max: 5
   delta_min: 100
   architecture_type: 'resnet18' # choose 'resnet18', 'resnet34', 'resnet50' or 'resnext50'
