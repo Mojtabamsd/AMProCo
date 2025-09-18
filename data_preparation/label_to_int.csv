@@ -47,17 +47,17 @@ Thecosomata,Mollusca,triangle_semi-opaque_no-appendages,Mollusca,otherliving,17,
 Tomopteridae,Annelida,fusiform_transparent_appendages,Annelida,otherliving,41,living>Eukaryota>Opisthokonta>Holozoa>Metazoa>Annelida>Polychaeta>Errantia>Tomopteridae
 Trachymedusae,non siphonophorae cnidaria,sphere_transparent_appendages,non siphonophoran hydrozoa,otherliving,36,living>Eukaryota>Opisthokonta>Holozoa>Metazoa>Cnidaria>Hydrozoa>Trachylinae>Trachymedusae
 antenna<Calanoida,Eumalacostraca,elongated_opaque_appendages,antenna_Crustacea,Calanoida,338,living>Eukaryota>Opisthokonta>Holozoa>Metazoa>Arthropoda>Crustacea>Maxillopoda>Copepoda>Calanoida>antenna
-artefact,artefact,NaN,artefact,artefact,30095,not-living>artefact
-bubble,artefact,NaN,artefact,artefact,44,not-living>artefact>bubble
+artefact,artefact,other,artefact,artefact,30095,not-living>artefact
+bubble,artefact,other,artefact,artefact,44,not-living>artefact>bubble
 chain<Salpida,non appendicularia tunicata,fusiform_transparent_appendages,Salpida,Salpida,147,living>Eukaryota>Opisthokonta>Holozoa>Metazoa>Chordata>Tunicata>Thaliacea>Salpida>chain
 cloud,Rhizaria,sphere_semi-opaque_no-appendages,Collodaria,Collodaria,242,living>Eukaryota>Harosa>Rhizaria>Retaria>Polycystinea>Collodaria>cloud
 colonial<Aulosphaeridae,Rhizaria,sphere_transparent_no-appendages,Phaeodaria,Aulacanthidae,10,living>Eukaryota>Harosa>Rhizaria>Cercozoa>Thecofilosea>Phaeodaria>Phaeosphaerida>Aulosphaeridae>colonial
 colonial<Coelodendridae,Rhizaria,sphere_semi-opaque_appendages,Phaeodaria,Rhizaria,36,living>Eukaryota>Harosa>Rhizaria>Cercozoa>Thecofilosea>Phaeodaria>Phaeodendrida>Coelodendridae>colonial
 copepoda eggs,Copepoda,ellipsoide_opaque_appendages,Copepoda,Calanoida,190,living>Eukaryota>Opisthokonta>Holozoa>Metazoa>Arthropoda>Crustacea>Maxillopoda>Copepoda>copepoda eggs
-crystal,artefact,NaN,artefact,artefact,3770,not-living>crystal
+crystal,artefact,other,artefact,artefact,3770,not-living>crystal
 darksphere,other_living,sphere_opaque_no-appendages,other_living,otherliving,340,living>other>othertocheck>sphere>dark
 dead<house,Appendicularia,sphere_transparent_no-appendages,Appendicularia,Appendicularia,900,living>Eukaryota>Opisthokonta>Holozoa>Metazoa>Chordata>Tunicata>Appendicularia>house>dead
-detritus,detritus,NaN,detritus,detritus,504634,not-living>detritus
+detritus,detritus,other,detritus,detritus,504634,not-living>detritus
 echinopluteus,Echinodermata,sphere_opaque_appendages,Echinodermata,otherliving,22,living>Eukaryota>Opisthokonta>Holozoa>Metazoa>Echinodermata>Echinoidea>echinopluteus
 egg sac<egg,other_living,sphere_semi-opaque_no-appendages,other_living,otherliving,72,living>other>egg>egg sac
 fiber,fiber,elongated_semi-opaque_no-appendages,fiber,fiber,32524,not-living>detritus>fiber
@@ -67,7 +67,7 @@ larvae<Echinodermata,Echinodermata,sphere_opaque_appendages,Echinodermata,otherl
 like<Copepoda,Copepoda,ellipsoide_opaque_no-appendages,like_Copepoda,Calanoida,2712,living>Eukaryota>Opisthokonta>Holozoa>Metazoa>Arthropoda>Crustacea>Maxillopoda>Copepoda>like
 like<Rhizaria,Rhizaria,sphere_semi-opaque_no-appendages,like_Rhizaria,Rhizaria,509,living>Eukaryota>Harosa>Rhizaria>like
 ophiopluteus,Echinodermata,sphere_opaque_appendages,Echinodermata,otherliving,70,living>Eukaryota>Opisthokonta>Holozoa>Metazoa>Echinodermata>Ophiuroidea>ophiopluteus
-other<living,other_living,NaN,other_living,otherliving,1572,living>other
+other<living,other_living,other,other_living,otherliving,1572,living>other
 puff,Trichodesmium,sphere_opaque_appendages,Trichodesmium,puff,7427,living>Bacteria>Cyanobacteria>Cyanophyceae>Trichodesmium>puff
 reflection,artefact,sphere_opaque_appendages,artefact,artefact,4592,not-living>artefact>reflection
 small<Cnidaria,non_siphonophoran_hydrozoa,sphere_transparent_no-appendages,non_siphonophoran_hydrozoa,small_Cnidaria,908,living>Eukaryota>Opisthokonta>Holozoa>Metazoa>Cnidaria>Hydrozoa>small-bell
