@@ -246,7 +246,7 @@ def train_uvp(rank, world_size, config, console):
 
     if world_size > 1:
         model = DDP(model, device_ids=[rank], find_unused_parameters=True)
-    fine_tune_start_epoch = 0
+    fine_tune_start_epoch = 80
     if config.training_contrastive.path_pretrain:
         pth_files = [file for file in os.listdir(config.training_path) if
                      file.endswith('.pth') and file != 'model_weights_best.pth']
@@ -511,7 +511,7 @@ def train_uvp(rank, world_size, config, console):
         if is_distributed:
             dist.barrier()
 
-        if rank != -1 and epoch > 80:
+        if rank != -1 and epoch > 75:
             acc1, many, med, few, total_labels, all_preds, all_features = validate(train_loader, val_loader, model, criterion_ce, config, console)
 
             is_best = acc1 > best_acc1
@@ -1336,11 +1336,11 @@ class AverageMeter(object):
         return fmtstr.format(**self.__dict__)
 
 
-def adjust_lr(optimizer, epoch, config, fine_tune_start_epoch=90, warmup_len=2, use_warmup=True):
+def adjust_lr(optimizer, epoch, config, fine_tune_start_epoch=80, warmup_len=2, use_warmup=True):
     """Decay the learning rate based on schedule"""
     lr = config.training_contrastive.learning_rate
 
-    if config.training_contrastive.fine_tune:
+    if config.training_contrastive.fine_tune and epoch >= fine_tune_start_epoch:
         # Cosine factor shared across groups
         fine_tune_end_epoch = config.training_contrastive.num_epoch
         t_num = max(1, (fine_tune_end_epoch - fine_tune_start_epoch + 1))
