@@ -1,14 +1,13 @@
 from torchvision.utils import save_image
 from torch import zeros
 import numpy as np
-# from sklearn.decomposition import PCA
-# import umap.umap_ as umap
-import torch
-from torch.utils.data import DataLoader
+import os
 import matplotlib.pyplot as plt
 import random
-
+import matplotlib.colors as mcolors
 from sklearn.manifold import TSNE
+# from sklearn.decomposition import PCA
+# import umap.umap_ as umap
 
 
 def visualization_output(img_org, outputs, visualisation_path, epoch, batch_size=32, gray=True):
@@ -79,15 +78,6 @@ def tsne_plot(latent_vectors, all_labels, int_to_label, out_path):
 
     out_path_name = out_path / "tsne_plot.png"
     plt.savefig(out_path_name, dpi=600)
-
-
-import os
-import random
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-
-from sklearn.manifold import TSNE
 
 
 def plot_tsne_from_validate(
