@@ -180,7 +180,7 @@ class BalSCL(nn.Module):
         mask = mask * logits_mask
 
         # class-complement
-        features = torch.cat(torch.unbind(features, dim=1), dim=0)
+        # features = torch.cat(torch.unbind(features, dim=1), dim=0)
         features = torch.cat([features, centers1], dim=0)
         logits = features[:2 * batch_size].mm(features.T)
         logits = torch.div(logits, self.temperature)
