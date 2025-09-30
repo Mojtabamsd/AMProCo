@@ -1157,7 +1157,7 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
             scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
 
             if config.training_contrastive.loss == 'bcl':
-                ce_loss = criterion_ce([f2, f3], mini_labels)
+                ce_loss = criterion_ce(torch.cat([f2, f3], dim=0), mini_labels)
             else:
                 ce_loss = criterion_ce(ce_logits, mini_labels)
 
