@@ -144,13 +144,31 @@ class BalSCL(nn.Module):
         self.temperature = temperature
         self.cls_num_list = cls_num_list
 
-    def forward(self, centers1, features, targets, ):
+    def _compute_batch_centers(self, features, targets):
+        """Compute class centers from the current mini-batch."""
+        num_classes = len(self.cls_num_list)
+        feat_dim = features.size(1)
+        centers = []
+        for c in range(num_classes):
+            mask = (targets == c)
+            if mask.any():
+                centers.append(features[mask].mean(dim=0))
+            else:
+                centers.append(torch.zeros(feat_dim, device=features.device))
+        return torch.stack(centers, dim=0)
+
+    def forward(self, features, targets):
         device = self.device
         batch_size = features.shape[0]
+
+        # compute batch-specific centers
+        centers1 = self._compute_batch_centers(features, targets)
+
         targets = targets.contiguous().view(-1, 1)
         targets_centers = torch.arange(len(self.cls_num_list), device=device).view(-1, 1)
         targets = torch.cat([targets.repeat(2, 1), targets_centers], dim=0)
-        batch_cls_count = torch.eye(len(self.cls_num_list))[targets].sum(dim=0).squeeze()
+
+        batch_cls_count = torch.eye(len(self.cls_num_list), device=device)[targets].sum(dim=0).squeeze()
 
         mask = torch.eq(targets[:2 * batch_size], targets.T).float().to(device)
         logits_mask = torch.scatter(
@@ -167,14 +185,14 @@ class BalSCL(nn.Module):
         logits = features[:2 * batch_size].mm(features.T)
         logits = torch.div(logits, self.temperature)
 
-        # For numerical stability
+        # numerical stability
         logits_max, _ = torch.max(logits, dim=1, keepdim=True)
         logits = logits - logits_max.detach()
 
         # class-averaging
         exp_logits = torch.exp(logits) * logits_mask
-        per_ins_weight = torch.tensor([batch_cls_count[i] for i in targets], device=device).view(1, -1).expand(
-            2 * batch_size, 2 * batch_size + len(self.cls_num_list)) - mask
+        per_ins_weight = torch.tensor([batch_cls_count[i] for i in targets],
+                                      device=device).view(1, -1).expand(2 * batch_size, 2 * batch_size + len(self.cls_num_list)) - mask
         exp_logits_sum = exp_logits.div(per_ins_weight).sum(dim=1, keepdim=True)
 
         log_prob = logits - torch.log(exp_logits_sum)
