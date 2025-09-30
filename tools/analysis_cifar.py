@@ -10,6 +10,28 @@ import shap
 import matplotlib.pyplot as plt
 
 
+def read_df(filename):
+    with open(filename, "r") as f:
+        raw = f.read()
+
+    records = []
+    for line in raw.strip().splitlines():
+        vec_str, acc_str, delta_str = re.match(r'(.*]),\s*([0-9.]+),\s*([0-9.]+)', line).groups()
+        vec = ast.literal_eval(vec_str)
+        records.append({'vec': vec,
+                        'accuracy': float(acc_str),
+                        'delta': float(delta_str),
+                        'total_prototypes': sum(vec)})
+
+    df = pd.DataFrame(records)
+
+    P_cols = [f'P{i}' for i in range(20)]
+    df[P_cols] = pd.DataFrame(df['vec'].tolist(), index=df.index)
+
+    delta_min = df['delta'].min()
+    delta_max = df['delta'].max()
+    df['delta'] = 100 * (df['delta'] - delta_min) / (delta_max - delta_min)
+    return df
 
 feature_names = [
     'aquatic_mammals',
@@ -36,31 +58,16 @@ feature_names = [
 
 save = True
 out_path = r'D:\mojmas\files\Projects\CVPR\plots\results'
-filename = r"prediction2.txt"
-with open(filename, "r") as f:
-    raw = f.read()
+filename = r"prediction_cifar.txt"
+filename_uvp = r"prediction_uvp.txt"
 
-records = []
-for line in raw.strip().splitlines():
-    vec_str, acc_str, delta_str = re.match(r'(.*]),\s*([0-9.]+),\s*([0-9.]+)', line).groups()
-    vec = ast.literal_eval(vec_str)
-    records.append({'vec': vec,
-                    'accuracy': float(acc_str),
-                    'delta': float(delta_str),
-                    'total_prototypes': sum(vec)})
-
-df = pd.DataFrame(records)
-
+df = read_df(filename)
+df_uvp = read_df(filename_uvp)
 P_cols = [f'P{i}' for i in range(20)]
-df[P_cols] = pd.DataFrame(df['vec'].tolist(), index=df.index)
-
-delta_min = df['delta'].min()
-delta_max = df['delta'].max()
-df['delta'] = 100 * (df['delta'] - delta_min) / (delta_max - delta_min)
-
 
 ############### Ablation ########################
 # 1 Fix total_prototypes, vary delta
+# cifar
 df_sample = df.sort_values(by="accuracy", ascending=False).head(123)
 
 proto_target = df_sample['total_prototypes'].mode()[0]
@@ -75,6 +82,29 @@ ablation2['accuracy_improvement'] = ablation2['accuracy'] - baseline_accuracy
 sorted_df1 = ablation2.sort_values("delta")
 lowess1 = sm.nonparametric.lowess
 smoothed1 = lowess1(sorted_df1["accuracy_improvement"], sorted_df1["delta"], frac=0.3)
+
+###### uvp
+df_sample_uvp = df_uvp.sort_values(by="accuracy", ascending=False).head(123)
+ablation_uvp = df_sample_uvp.copy()
+
+baseline_accuracy = ablation_uvp.loc[ablation_uvp['accuracy'].idxmin(), 'accuracy']
+# baseline_accuracy = 50.57
+ablation_uvp['accuracy_improvement'] = ablation_uvp['accuracy'] - baseline_accuracy
+
+sorted_df_uvp = ablation_uvp.sort_values("delta")
+lowess3 = sm.nonparametric.lowess
+smoothed3 = lowess3(sorted_df_uvp["accuracy_improvement"], sorted_df_uvp["delta"], frac=0.4)
+
+#normalize:
+y1 = smoothed1[:, 0]
+y3 = smoothed3[:, 0]
+
+min1, max1 = np.min(y1), np.max(y1)
+min3, max3 = np.min(y3), np.max(y3)
+
+y3_norm = (y3 - min3) / (max3 - min3) * (max1 - min1) + min1
+smoothed3_norm = smoothed3.copy()
+smoothed3_norm[:, 0] = y3_norm
 
 # 2 vary total_prototypes
 top_10 = df.nlargest(50, 'accuracy')
@@ -98,11 +128,19 @@ lowess2 = sm.nonparametric.lowess
 smoothed2 = lowess2(sorted_df2["accuracy_improvement"], sorted_df2["total_prototypes"], frac=0.3)
 
 
+### uvp
+sorted_df2_uvp = df_sample_uvp.sort_values("total_prototypes")
+baseline_accuracy = 44.07 # when all is one
+sorted_df2_uvp['accuracy_improvement'] = sorted_df2_uvp['accuracy'] - baseline_accuracy
+lowess4 = sm.nonparametric.lowess
+smoothed4 = lowess4(sorted_df2_uvp["accuracy_improvement"], sorted_df2_uvp["total_prototypes"], frac=0.4)
+
 if save:
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5), sharey=True)
 
     # --- First subplot:
-    ax1.plot(smoothed1[:, 0], smoothed1[:, 1], color='blue', label='LOWESS trend')
+    ax1.plot(smoothed1[:, 0], smoothed1[:, 1], color=plt.cm.Blues(0.6), linestyle='-', marker='o', label='LOWESS trend - CIFAR')
+    ax1.plot(smoothed3_norm[:, 0], smoothed3_norm[:, 1], color=plt.cm.Blues(0.9), linestyle='--', marker='s', label='LOWESS trend - UVP6NET')
     ax1.axhline(0, color='gray', linestyle='--', linewidth=1)
     ax1.set_xlabel("Delta")
     ax1.set_ylabel("Accuracy Improvement (from baseline)")
@@ -112,7 +150,8 @@ if save:
     ax1.grid(True, linestyle='--', alpha=0.5)
 
     # --- Second subplot:
-    ax2.plot(smoothed2[:, 0], smoothed2[:, 1], color='red', label='LOWESS trend')
+    ax2.plot(smoothed2[:, 0], smoothed2[:, 1], color=plt.cm.Reds(0.6), linestyle='-', marker='^', label='LOWESS trend - CIFAR')
+    ax2.plot(smoothed4[:, 0], smoothed4[:, 1], color=plt.cm.Reds(0.9), linestyle='--', marker='d', label='LOWESS trend - UVP6NET')
     ax2.axhline(0, color='gray', linestyle='--', linewidth=1)
     ax2.set_xlabel("Total Number of Prototypes")
     # Y-label is omitted here since it's shared from ax1
@@ -123,7 +162,7 @@ if save:
 
     # Tight layout and save
     plt.tight_layout()
-    out_path_name = out_path + r"\compare_prototypes_vs_delta.png"
+    out_path_name = out_path + r"\compare_prototypes_vs_delta_twodataset.png"
     plt.savefig(out_path_name, dpi=600)
     plt.close()
 
