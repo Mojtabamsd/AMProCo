@@ -161,6 +161,9 @@ class BalSCL(nn.Module):
         device = self.device
         batch_size = features.shape[0]
 
+        if targets.shape[0] * 2 == batch_size:
+            targets = torch.cat([targets, targets], dim=0)
+
         # compute batch-specific centers
         centers1 = self._compute_batch_centers(features, targets)
 
