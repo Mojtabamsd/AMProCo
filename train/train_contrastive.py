@@ -1263,10 +1263,10 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
                     shutil.copy(input_path, image_path)
 
 
-        ce_loss = criterion_ce(total_logits, total_labels)
+        # ce_loss = criterion_ce(total_logits, total_labels)
         acc1 = accuracy(total_logits, total_labels, topk=(1,))
 
-        ce_loss_all.update(ce_loss.item(), 1)
+        # ce_loss_all.update(ce_loss.item(), 1)
         top1.update(acc1[0].item(), 1)
         acc1 = top1.avg
 
