@@ -9,8 +9,6 @@ import statsmodels.api as sm
 import shap
 import matplotlib.pyplot as plt
 
-
-
 feature_names = [
     'Actinopterygii',
     'Annelida',
@@ -35,178 +33,45 @@ feature_names = [
 ]
 
 
+def read_df(filename):
+    with open(filename, "r") as f:
+        raw = f.read()
+
+    records = []
+    for line in raw.strip().splitlines():
+        vec_str, acc_str, delta_str = re.match(r'(.*]),\s*(-?[0-9.]+),\s*(-?[0-9.]+)', line).groups()
+        vec = ast.literal_eval(vec_str)
+        records.append({
+            'vec': vec,
+            'accuracy': float(acc_str),
+            'delta': float(delta_str),
+            'total_prototypes': sum(vec)
+        })
+
+    df = pd.DataFrame(records)
+
+    P_cols = [f'P{i}' for i in range(20)]
+    df[P_cols] = pd.DataFrame(df['vec'].tolist(), index=df.index)
+
+    mask = df['delta'] != -1
+    if mask.any():
+        delta_min = df.loc[mask, 'delta'].min()
+        delta_max = df.loc[mask, 'delta'].max()
+        if delta_max > delta_min:  # avoid div by zero
+            df.loc[mask, 'delta'] = 100 * (df.loc[mask, 'delta'] - delta_min) / (delta_max - delta_min)
+        else:
+            df.loc[mask, 'delta'] = 0.0
+
+    return df
+
 save = True
 out_path = r'D:\mojmas\files\Projects\CVPR\plots\results\uvp'
 filename = r"prediction_uvp.txt"
-with open(filename, "r") as f:
-    raw = f.read()
 
-records = []
-for line in raw.strip().splitlines():
-    vec_str, acc_str, delta_str = re.match(r'(.*]),\s*([0-9.]+),\s*([0-9.]+)', line).groups()
-    vec = ast.literal_eval(vec_str)
-    records.append({'vec': vec,
-                    'accuracy': float(acc_str),
-                    'delta': float(delta_str),
-                    'total_prototypes': sum(vec)})
-
-df = pd.DataFrame(records)
-
+df = read_df(filename)
 P_cols = [f'P{i}' for i in range(20)]
-df[P_cols] = pd.DataFrame(df['vec'].tolist(), index=df.index)
 
-delta_min = df['delta'].min()
-delta_max = df['delta'].max()
-df['delta'] = 100 * (df['delta'] - delta_min) / (delta_max - delta_min)
-
-
-############### Ablation ########################
-# 1 Fix total_prototypes, vary delta
-df_sample = df.sort_values(by="accuracy", ascending=False).head(123)
-
-# proto_target = df_sample['total_prototypes'].mode()[0]
-# proto_target = 46
-# # ablation2 = df[df['total_prototypes'] == proto_target]
-# ablation2 = df_sample[np.isclose(df_sample['total_prototypes'], proto_target, atol=5)]
-
-ablation2 = df_sample.copy()
-
-
-baseline_accuracy = ablation2.loc[ablation2['accuracy'].idxmin(), 'accuracy']
-# baseline_accuracy = 50.57
-ablation2['accuracy_improvement'] = ablation2['accuracy'] - baseline_accuracy
-
-sorted_df1 = ablation2.sort_values("delta")
-lowess1 = sm.nonparametric.lowess
-smoothed1 = lowess1(sorted_df1["accuracy_improvement"], sorted_df1["delta"], frac=0.3)
-
-# 2 vary total_prototypes
-# top_10 = df.nlargest(50, 'accuracy')
-# bottom_10 = df.nsmallest(5, 'accuracy')
-# specific_row = df.loc[[114, 113, 111, 110]]
-#
-# # Combine them
-# df_sample = pd.concat([top_10, bottom_10, specific_row])
-
-
-# Optional: reset index if needed
-df_sample = df_sample.reset_index(drop=True)
-# df_sample = df.copy()
-
-sorted_df2 = df_sample.sort_values("total_prototypes")
-
-# baseline_accuracy = sorted_df.loc[sorted_df['accuracy'].idxmin(), 'accuracy']
-baseline_accuracy = 44.07  # when all is one
-sorted_df2['accuracy_improvement'] = sorted_df2['accuracy'] - baseline_accuracy
-
-lowess2 = sm.nonparametric.lowess
-smoothed2 = lowess2(sorted_df2["accuracy_improvement"], sorted_df2["total_prototypes"], frac=0.3)
-
-
-if save:
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5), sharey=True)
-
-    # --- First subplot:
-    ax1.plot(smoothed1[:, 0], smoothed1[:, 1], color='blue', label='LOWESS trend')
-    ax1.axhline(0, color='gray', linestyle='--', linewidth=1)
-    ax1.set_xlabel("Delta")
-    ax1.set_ylabel("Accuracy Improvement (from baseline)")
-    ax1.legend()
-    ax1.spines['top'].set_visible(False)
-    ax1.spines['right'].set_visible(False)
-    ax1.grid(True, linestyle='--', alpha=0.5)
-
-    # --- Second subplot:
-    ax2.plot(smoothed2[:, 0], smoothed2[:, 1], color='red', label='LOWESS trend')
-    ax2.axhline(0, color='gray', linestyle='--', linewidth=1)
-    ax2.set_xlabel("Total Number of Prototypes")
-    # Y-label is omitted here since it's shared from ax1
-    ax2.legend()
-    ax2.spines['top'].set_visible(False)
-    ax2.spines['right'].set_visible(False)
-    ax2.grid(True, linestyle='--', alpha=0.5)
-
-    # Tight layout and save
-    plt.tight_layout()
-    out_path_name = out_path + r"\compare_prototypes_vs_delta.png"
-    plt.savefig(out_path_name, dpi=600)
-    plt.close()
-
-############### SHAP Analysis ########################
-# feature importance to answer "Which classes' prototype counts explain accuracy best?"
-# df_sample = df.sort_values(by="accuracy", ascending=False).head(100)
-df_sample = df.copy()
-
-X = df_sample[P_cols]  # P0..P19
-y = df_sample['accuracy']
-
-rf = RandomForestRegressor(n_estimators=100, random_state=42)
-rf.fit(X, y)
-
-# Use TreeExplainer for RF
-explainer = shap.Explainer(rf)
-shap_values = explainer(X)
-
-if save:
-    plt.figure()
-    shap.summary_plot(shap_values, X, feature_names=feature_names, plot_size=(12, 8), show=False)
-    out_path_name = out_path + r"\shap_summary_dot.png"
-    plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
-    plt.close()
-
-    plt.figure()
-    shap.summary_plot(shap_values, X, feature_names=feature_names, plot_type='bar', plot_size=(12, 8), show=False)
-    out_path_name = out_path + r"\shap_bar.png"
-    plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
-    plt.close()
-
-
-if save:
-    plt.figure()
-    highlight_mask = (X == 1)
-
-    # Loop through features to overlay red dots where prototype == 1
-    for i, name in enumerate(feature_names):
-        idxs = np.where(highlight_mask.iloc[:, i])[0]
-        shap_vals = shap_values.values[idxs, i]
-
-        plt.scatter(
-            [shap_vals],
-            [np.full_like(shap_vals, i)],
-            color='green',
-            alpha=0.5,
-            s=15,
-            label='Prototype = 1' if i == 0 else ""
-        )
-
-    # Then add the normal summary plot
-    shap.summary_plot(shap_values, X, feature_names=feature_names, plot_size=(12, 8), show=False)
-    plt.legend()
-    # plt.title("Red = SHAP values where prototype count == 1")
-    plt.tight_layout()
-    # plt.show()
-    out_path_name = out_path + r"\shap_summary_dot_prototype_1.png"
-    plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
-    plt.close()
-
-if save:
-    plt.figure()
-    # binary, 1 again rest
-    X_binary = (X == 1).astype(int)  # 1 = exactly 1 prototype; 0 = all others
-    rf_bin = RandomForestRegressor().fit(X_binary, y)
-    explainer_bin = shap.Explainer(rf_bin)
-    shap_vals_bin = explainer_bin(X_binary)
-
-    shap.summary_plot(shap_vals_bin, X_binary, feature_names=feature_names, plot_size=(12, 8), show=False)
-    out_path_name = out_path + r"\shap_summary_binary.png"
-    plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
-    plt.close()
-
-    plt.figure()
-    shap.summary_plot(shap_vals_bin, X_binary, feature_names=feature_names, plot_type='bar', plot_size=(12, 8), show=False)
-    out_path_name = out_path + r"\shap_bar_binary.png"
-    plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
-    plt.close()
+df_radar = df[df['delta'] >= 0]
 
 ############## top configs ########################
 N = 10
@@ -230,14 +95,14 @@ if save:
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     # plt.show()
-    out_path_name = out_path + r"\top_10_heatmap.png"
+    out_path_name = out_path + r"\top_10_heatmap_uvp.png"
     plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
     plt.close()
 
 
 # radar plot
 N = 5
-top10_df = df.sort_values(by="accuracy", ascending=False).head(N).reset_index(drop=True)
+top10_df = df_radar.sort_values(by="accuracy", ascending=False).head(N).reset_index(drop=True)
 proto_matrix = top10_df[P_cols]
 proto_matrix.columns = feature_names
 
@@ -250,6 +115,14 @@ if save:
     # Create figure
     fig = plt.figure(figsize=(12, 12))
     ax = plt.subplot(111, polar=True)
+
+    ax.set_theta_offset(np.pi / 2)     # start at 12 o'clock
+    ax.set_theta_direction(-1)
+
+    num_rings = 4
+    ax.set_ylim(0, num_rings)
+    ax.set_yticks(range(1, num_rings + 1))
+    ax.set_yticklabels([])
     # Plot each run
     for i, row in proto_matrix.iterrows():
         values = row.values.tolist()
@@ -262,6 +135,8 @@ if save:
     ax.set_xticklabels(feature_names, fontsize=9)
     # ax.set_title("Radar Plot: Prototype Distribution in Top-10 Accuracy Runs", size=14, pad=20)
 
+    ax.set_rlabel_position(0)
+
     # Optional: Hide y-axis labels or set radial limits
     ax.set_yticklabels([])
     ax.set_rlabel_position(0)
@@ -269,13 +144,13 @@ if save:
     plt.legend(bbox_to_anchor=(1.3, 1.05), loc='upper left')
     plt.tight_layout()
     # plt.show()
-    out_path_name = out_path + r"\top_5_radar.png"
+    out_path_name = out_path + r"\top_5_radar_uvp.png"
     plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
     plt.close()
 
 
 N = 10
-top10_df = df.sort_values(by="accuracy", ascending=False).head(N).reset_index(drop=True)
+top10_df = df_radar.sort_values(by="accuracy", ascending=False).head(N).reset_index(drop=True)
 proto_matrix = top10_df[P_cols]
 proto_matrix.columns = feature_names
 
@@ -288,6 +163,10 @@ if save:
     # Create figure
     fig = plt.figure(figsize=(12, 12))
     ax = plt.subplot(111, polar=True)
+
+    ax.set_theta_offset(np.pi / 2)     # start at 12 o'clock
+    ax.set_theta_direction(-1)
+
     # Plot each run
     for i, row in proto_matrix.iterrows():
         values = row.values.tolist()
@@ -307,7 +186,7 @@ if save:
     plt.legend(bbox_to_anchor=(1.3, 1.05), loc='upper left')
     plt.tight_layout()
     # plt.show()
-    out_path_name = out_path + r"\top_10_radar.png"
+    out_path_name = out_path + r"\top_10_radar_uvp.png"
     plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
     plt.close()
 
@@ -315,6 +194,8 @@ if save:
 
 # Define top and bottom N configs
 N = 10
+df = df.drop(index=70)
+df = df.drop(index=4)
 topN = df.sort_values(by='accuracy', ascending=False).head(N)
 botN = df.sort_values(by='accuracy', ascending=True).head(N)
 
@@ -340,7 +221,7 @@ if save:
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     # plt.show()
-    out_path_name = out_path + r"\top_vs_bottom.png"
+    out_path_name = out_path + r"\top_vs_bottom_uvp.png"
     plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
     plt.close()
 
@@ -355,6 +236,9 @@ angles += angles[:1]
 if save:
     fig = plt.figure(figsize=(8, 8))
     ax = plt.subplot(111, polar=True)
+
+    ax.set_theta_offset(np.pi / 2)     # start at 12 o'clock
+    ax.set_theta_direction(-1)
 
     ax.plot(angles, top_vals, label=f'Top {N} avg', color='green', lw=2)
     ax.fill(angles, top_vals, color='green', alpha=0.1)
@@ -375,7 +259,7 @@ if save:
     plt.tight_layout()
     # plt.show()
 
-    out_path_name = out_path + r"\top_vs_bottom_radar.png"
+    out_path_name = out_path + r"\top_vs_bottom_radar_uvp.png"
     plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
     plt.close()
 

@@ -16,12 +16,14 @@ def read_df(filename):
 
     records = []
     for line in raw.strip().splitlines():
-        vec_str, acc_str, delta_str = re.match(r'(.*]),\s*([0-9.]+),\s*([0-9.]+)', line).groups()
+        vec_str, acc_str, delta_str = re.match(r'(.*]),\s*(-?[0-9.]+),\s*(-?[0-9.]+)', line).groups()
         vec = ast.literal_eval(vec_str)
-        records.append({'vec': vec,
-                        'accuracy': float(acc_str),
-                        'delta': float(delta_str),
-                        'total_prototypes': sum(vec)})
+        records.append({
+            'vec': vec,
+            'accuracy': float(acc_str),
+            'delta': float(delta_str),
+            'total_prototypes': sum(vec)
+        })
 
     df = pd.DataFrame(records)
 
@@ -30,7 +32,10 @@ def read_df(filename):
 
     delta_min = df['delta'].min()
     delta_max = df['delta'].max()
-    df['delta'] = 100 * (df['delta'] - delta_min) / (delta_max - delta_min)
+    if delta_max > delta_min:  # avoid divide by zero
+        df['delta'] = 100 * (df['delta'] - delta_min) / (delta_max - delta_min)
+    else:
+        df['delta'] = 0.0
     return df
 
 feature_names = [
@@ -45,7 +50,7 @@ feature_names = [
     'large_carnivores',
     'large_man-made_outdoor_things',
     'large_natural_outdoor_scenes',
-    'large_omnivores_and_herbivores',
+    'large_omnivores_and_herb...',
     'medium-sized_mammals',
     'non-insect_invertebrates',
     'people',
@@ -63,6 +68,10 @@ filename_uvp = r"prediction_uvp.txt"
 
 df = read_df(filename)
 df_uvp = read_df(filename_uvp)
+# df_uvp = df_uvp[df_uvp['delta'] > 0]
+df_sample_uvp = df_uvp.sort_values(by="accuracy", ascending=False).head(123)
+
+
 P_cols = [f'P{i}' for i in range(20)]
 
 ############### Ablation ########################
@@ -84,7 +93,6 @@ lowess1 = sm.nonparametric.lowess
 smoothed1 = lowess1(sorted_df1["accuracy_improvement"], sorted_df1["delta"], frac=0.3)
 
 ###### uvp
-df_sample_uvp = df_uvp.sort_values(by="accuracy", ascending=False).head(123)
 ablation_uvp = df_sample_uvp.copy()
 
 baseline_accuracy = ablation_uvp.loc[ablation_uvp['accuracy'].idxmin(), 'accuracy']
@@ -133,7 +141,7 @@ sorted_df2_uvp = df_sample_uvp.sort_values("total_prototypes")
 baseline_accuracy = 44.07 # when all is one
 sorted_df2_uvp['accuracy_improvement'] = sorted_df2_uvp['accuracy'] - baseline_accuracy
 lowess4 = sm.nonparametric.lowess
-smoothed4 = lowess4(sorted_df2_uvp["accuracy_improvement"], sorted_df2_uvp["total_prototypes"], frac=0.4)
+smoothed4 = lowess4(sorted_df2_uvp["accuracy_improvement"], sorted_df2_uvp["total_prototypes"], frac=0.3)
 
 if save:
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5), sharey=True)
@@ -284,6 +292,10 @@ if save:
     # Create figure
     fig = plt.figure(figsize=(12, 12))
     ax = plt.subplot(111, polar=True)
+
+    ax.set_theta_offset(np.pi / 2)     # start at 12 o'clock
+    ax.set_theta_direction(-1)
+
     # Plot each run
     for i, row in proto_matrix.iterrows():
         values = row.values.tolist()
@@ -322,6 +334,10 @@ if save:
     # Create figure
     fig = plt.figure(figsize=(12, 12))
     ax = plt.subplot(111, polar=True)
+
+    ax.set_theta_offset(np.pi / 2)     # start at 12 o'clock
+    ax.set_theta_direction(-1)
+
     # Plot each run
     for i, row in proto_matrix.iterrows():
         values = row.values.tolist()
@@ -389,6 +405,9 @@ angles += angles[:1]
 if save:
     fig = plt.figure(figsize=(8, 8))
     ax = plt.subplot(111, polar=True)
+
+    ax.set_theta_offset(np.pi / 2)     # start at 12 o'clock
+    ax.set_theta_direction(-1)
 
     ax.plot(angles, top_vals, label=f'Top {N} avg', color='green', lw=2)
     ax.fill(angles, top_vals, color='green', alpha=0.1)
