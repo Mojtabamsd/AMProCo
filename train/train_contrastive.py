@@ -511,7 +511,7 @@ def train_uvp(rank, world_size, config, console):
         if is_distributed:
             dist.barrier()
 
-        if rank != -1 and epoch > 75:
+        if rank != -1 and (config.training_contrastive.num_epoch - epoch) <= 10:
             acc1, many, med, few, total_labels, all_preds, all_features = validate(train_loader, val_loader, model, criterion_ce, config, console)
 
             is_best = acc1 > best_acc1
