@@ -579,7 +579,7 @@ def train_cifar(rank, world_size, config, console):
 
     # Define data transformations
     augmentation_regular = [
-        transforms.RandomCrop(config.training_contrastive.target_size[0], padding=4),
+        transforms.RandomResizedCrop(config.training_contrastive.target_size[0]),
         transforms.RandomHorizontalFlip(),
         CIFAR10Policy(),
         transforms.ToTensor(),
