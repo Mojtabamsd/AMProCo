@@ -8,7 +8,7 @@ Adaptive Multi-Prototype Probabilistic Contrastive Learning for Long-Tailed Reco
 ## Prerequisites
 - Linux or macOS or windows
 - Python 3
-- CPU or NVIDIA GPU + CUDA CuDNN
+- CPU or NVIDIA GPU (CUDA + cuDNN) or AMD GPU (ROCm, Linux only)
 
 ### Getting started
 - Clone this repo:
@@ -19,9 +19,11 @@ cd AMP
 
 - Install [PyTorch](http://pytorch.org) and other dependencies (e.g., torchvision).
 
+  **AMD GPU users:** Install [ROCm](https://rocm.docs.amd.com/) on your system first (Linux only). The requirements use the ROCm build of PyTorch.
+
   For pip users, please type the command `pip install -r requirements.txt`.
 
-  For Conda users,  you can create a new Conda environment using `conda env create -f environment.yml`.
+  For Conda users, you can create a new Conda environment using `conda env create -f environment.yml`. If the ROCm conda package fails, AMD users can install PyTorch via pip after creating the env: `pip install torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/rocm5.4.2`
 
 
 ### Train a model
