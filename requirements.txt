@@ -1,4 +1,5 @@
 --index-url https://download.pytorch.org/whl/rocm5.4.2
+--extra-index-url https://pypi.org/simple
 
 torch==2.0.1
 torchvision==0.15.2
