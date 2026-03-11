@@ -26,7 +26,9 @@ from models.proco import ProCoLoss
 from models.amproco import HierarchicalProCoWrapper
 from dataset.cifar import CIFAR100_SUPERCLASSES
 import time
+import contextlib
 import torch.nn.functional as F
+from torch.profiler import profile, ProfilerActivity
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 import numpy as np
@@ -959,6 +961,14 @@ def train_cifar(rank, world_size, config, console):
         )
 
 
+class _NoopProf:
+    """Dummy profiler when profiling is disabled."""
+    def key_averages(self):
+        return self
+    def table(self, **kwargs):
+        return ""
+
+
 def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, config, console):
     model.train()
 
@@ -970,92 +980,103 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
     scl_loss_all = AverageMeter('SCL_Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
 
+    activities = [ProfilerActivity.CPU]
+    if torch.cuda.is_available():
+        activities.append(ProfilerActivity.CUDA)
+    prof_ctx = profile(activities=activities, record_shapes=True, profile_memory=True) if epoch == 0 else contextlib.nullcontext(_NoopProf())
+
     end = time.time()
-    for batch_idx, data in enumerate(train_loader):
-        if len(data) == 3:
-            images, labels, _ = data
-        elif len(data) == 2:
-            images, labels = data
-        else:
-            raise ValueError("Unexpected number of elements returned by train_loader.")
-
-        batch_size = labels.shape[0]
-        labels = labels.to(config.device)
-
-        mini_batch_size = batch_size // config.training_contrastive.accumulation_steps
-
-        images_0_mini_batches = torch.split(images[0], mini_batch_size)
-        images_1_mini_batches = torch.split(images[1], mini_batch_size)
-        images_2_mini_batches = torch.split(images[2], mini_batch_size)
-        labels_mini_batches = torch.split(labels, mini_batch_size)
-
-        optimizer.zero_grad()
-
-        aggregated_logits = []
-
-        for i in range(len(images_0_mini_batches)):
-            mini_images = torch.cat([images_0_mini_batches[i], images_1_mini_batches[i], images_2_mini_batches[i]],
-                                    dim=0)
-            mini_labels = labels_mini_batches[i]
-
-            mini_images, mini_labels = mini_images.to(config.device), mini_labels.to(config.device)
-
-            feat_mlp, ce_logits, _ = model(mini_images)
-            _, f2, f3 = torch.split(feat_mlp, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
-            ce_logits, _, __ = torch.split(ce_logits, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
-
-            contrast_logits1 = criterion_scl(f2, mini_labels)
-            contrast_logits2 = criterion_scl(f3, mini_labels)
-
-            contrast_logits1, contrast_logits2 = contrast_logits1.to(config.device), contrast_logits2.to(config.device)
-
-            contrast_logits = (contrast_logits1 + contrast_logits2) / 2
-
-            scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
-            ce_loss = criterion_ce(ce_logits, mini_labels)
-
-            alpha = 1
-            if epoch > 200:
-                lambda_ = 0
+    with prof_ctx as prof:
+        for batch_idx, data in enumerate(train_loader):
+            if len(data) == 3:
+                images, labels, _ = data
+            elif len(data) == 2:
+                images, labels = data
             else:
-                lambda_ = 1
-            logits = ce_logits + alpha * contrast_logits
-            loss = lambda_ * ce_loss + alpha * scl_loss
+                raise ValueError("Unexpected number of elements returned by train_loader.")
 
-            # Accumulate gradients
-            loss.backward()
-            aggregated_logits.append(logits)
+            batch_size = labels.shape[0]
+            labels = labels.to(config.device)
 
-        optimizer.step()
-        aggregated_logits = torch.cat(aggregated_logits, dim=0)
-        aggregated_logits = aggregated_logits.to(config.device)
+            mini_batch_size = batch_size // config.training_contrastive.accumulation_steps
 
-        ce_loss_all.update(ce_loss.item(), batch_size)
-        scl_loss_all.update(scl_loss.item(), batch_size)
+            images_0_mini_batches = torch.split(images[0], mini_batch_size)
+            images_1_mini_batches = torch.split(images[1], mini_batch_size)
+            images_2_mini_batches = torch.split(images[2], mini_batch_size)
+            labels_mini_batches = torch.split(labels, mini_batch_size)
 
-        acc1 = accuracy(aggregated_logits, labels, topk=(1,))
-        top1.update(acc1[0].item(), batch_size)
+            optimizer.zero_grad()
+
+            aggregated_logits = []
+
+            for i in range(len(images_0_mini_batches)):
+                mini_images = torch.cat([images_0_mini_batches[i], images_1_mini_batches[i], images_2_mini_batches[i]],
+                                        dim=0)
+                mini_labels = labels_mini_batches[i]
+
+                mini_images, mini_labels = mini_images.to(config.device), mini_labels.to(config.device)
+
+                feat_mlp, ce_logits, _ = model(mini_images)
+                _, f2, f3 = torch.split(feat_mlp, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
+                ce_logits, _, __ = torch.split(ce_logits, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
+
+                contrast_logits1 = criterion_scl(f2, mini_labels)
+                contrast_logits2 = criterion_scl(f3, mini_labels)
+
+                contrast_logits1, contrast_logits2 = contrast_logits1.to(config.device), contrast_logits2.to(config.device)
+
+                contrast_logits = (contrast_logits1 + contrast_logits2) / 2
+
+                scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
+                ce_loss = criterion_ce(ce_logits, mini_labels)
+
+                alpha = 1
+                if epoch > 200:
+                    lambda_ = 0
+                else:
+                    lambda_ = 1
+                logits = ce_logits + alpha * contrast_logits
+                loss = lambda_ * ce_loss + alpha * scl_loss
+
+                # Accumulate gradients
+                loss.backward()
+                aggregated_logits.append(logits)
+
+            optimizer.step()
+            aggregated_logits = torch.cat(aggregated_logits, dim=0)
+            aggregated_logits = aggregated_logits.to(config.device)
+
+            ce_loss_all.update(ce_loss.item(), batch_size)
+            scl_loss_all.update(scl_loss.item(), batch_size)
+
+            acc1 = accuracy(aggregated_logits, labels, topk=(1,))
+            top1.update(acc1[0].item(), batch_size)
 
         # optimizer.zero_grad()
         # loss.backward()
         # optimizer.step()
 
-        batch_time.update(time.time() - end)
-        end = time.time()
+            batch_time.update(time.time() - end)
+            end = time.time()
 
-        # # for debug
-        # from tools.image import save_img
-        # save_img(images, batch_idx, epoch, training_path/"augmented")
+            # # for debug
+            # from tools.image import save_img
+            # save_img(images, batch_idx, epoch, training_path/"augmented")
 
-        # if batch_idx % 20 == 0:
-        #     output = ('Epoch: [{0}][{1}/{2}] \t'
-        #               'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-        #               'CE_Loss {ce_loss.val:.4f} ({ce_loss.avg:.4f})\t'
-        #               'SCL_Loss {scl_loss.val:.4f} ({scl_loss.avg:.4f})\t'
-        #               'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-        #         epoch, batch_idx, len(train_loader), batch_time=batch_time,
-        #         ce_loss=ce_loss_all, scl_loss=scl_loss_all, top1=top1, ))  # TODO
-        #     print(output)
+            # if batch_idx % 20 == 0:
+            #     output = ('Epoch: [{0}][{1}/{2}] \t'
+            #               'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+            #               'CE_Loss {ce_loss.val:.4f} ({ce_loss.avg:.4f})\t'
+            #               'SCL_Loss {scl_loss.val:.4f} ({scl_loss.avg:.4f})\t'
+            #               'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
+            #         epoch, batch_idx, len(train_loader), batch_time=batch_time,
+            #         ce_loss=ce_loss_all, scl_loss=scl_loss_all, top1=top1, ))  # TODO
+            #     print(output)
+
+        if epoch == 0:
+            sort_by = "cuda_time_total" if torch.cuda.is_available() else "cpu_time_total"
+            prof_table = prof.key_averages().table(sort_by=sort_by, row_limit=30)
+            console.info(f"\n--- PyTorch Profiler (CPU/GPU) ---\n{prof_table}")
 
     console.info(f"CE loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {ce_loss_all.avg:.4f} ")
     console.info(
