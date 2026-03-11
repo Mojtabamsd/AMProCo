@@ -991,6 +991,7 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
     prof_ctx = profile(activities=activities, record_shapes=True, profile_memory=True) if epoch == 0 else contextlib.nullcontext(_NoopProf())
 
     end = time.time()
+    prof_result = None
     with prof_ctx as prof:
         for batch_idx, data in enumerate(train_loader):
             if len(data) == 3:
@@ -1089,13 +1090,20 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
             #     print(output)
 
         if epoch == 0:
+            prof_result = prof
             if torch.cuda.is_available() and not is_rocm:
                 torch.cuda.synchronize()
+
+    # Access profiler results after context exit (required on NVIDIA)
+    if epoch == 0 and prof_result is not None and hasattr(prof_result, "key_averages"):
+        try:
             sort_by = "cuda_time_total" if (torch.cuda.is_available() and not is_rocm) else "cpu_time_total"
-            prof_table = prof.key_averages().table(sort_by=sort_by, row_limit=30)
+            prof_table = prof_result.key_averages().table(sort_by=sort_by, row_limit=30)
             if not prof_table or not prof_table.strip():
-                prof_table = prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=30)
+                prof_table = prof_result.key_averages().table(sort_by="self_cpu_time_total", row_limit=30)
             console.info(f"\n--- PyTorch Profiler (CPU/GPU) ---\n{prof_table}")
+        except RuntimeError:
+            console.info("PyTorch Profiler: results not available (NVIDIA async)")
 
     console.info(f"CE loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {ce_loss_all.avg:.4f} ")
     console.info(
