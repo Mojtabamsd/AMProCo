@@ -1068,7 +1068,7 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
 
             acc1 = accuracy(aggregated_logits, labels, topk=(1,))
             top1.update(acc1[0].item(), batch_size)
-            if torch.profiler:
+            if torch_profile:
                 prof.step()
     if torch_profile:
         prof.export_chrome_trace(f"trace_epoch_{epoch}.json")
