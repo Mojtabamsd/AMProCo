@@ -35,7 +35,7 @@ import numpy as np
 from tools.visualization import plot_tsne_from_validate
 
 
-def train_contrastive(config_path, input_path, output_path):
+def train_contrastive(config_path, input_path, output_path, profiling_context):
 
     config = Configuration(config_path, input_path, output_path)
     config.phase = 'train'      # will train with whole dataset and testing results if there is a test file
@@ -107,15 +107,15 @@ def train_contrastive(config_path, input_path, output_path):
 
     if config.training_contrastive.dataset == 'uvp':
         if world_size > 1:
-            mp.spawn(train_uvp, args=(world_size, config, console), nprocs=world_size, join=True)
+            mp.spawn(train_uvp, args=(world_size, config, console, profiling_context), nprocs=world_size, join=True)
         else:
-            train_uvp(config.base.gpu_index, world_size, config, console)
+            train_uvp(config.base.gpu_index, world_size, config, console, profiling_context)
 
     elif config.training_contrastive.dataset == 'cifar100':
         if world_size > 1:
-            mp.spawn(train_cifar, args=(world_size, config, console), nprocs=world_size, join=True)
+            mp.spawn(train_cifar, args=(world_size, config, console, profiling_context), nprocs=world_size, join=True)
         else:
-            train_cifar(config.base.gpu_index, world_size, config, console)
+            train_cifar(config.base.gpu_index, world_size, config, console, profiling_context)
 
 
 def setup(rank, world_size):
@@ -136,7 +136,7 @@ def cleanup():
         dist.destroy_process_group()
 
 
-def train_uvp(rank, world_size, config, console):
+def train_uvp(rank, world_size, config, console, profiling_context):
 
     if world_size > 1:
         setup(rank, world_size)
@@ -556,7 +556,7 @@ def train_uvp(rank, world_size, config, console):
         )
 
 
-def train_cifar(rank, world_size, config, console):
+def train_cifar(rank, world_size, config, console, profiling_context):
 
     if world_size > 1:
         setup(rank, world_size)
@@ -766,7 +766,7 @@ def train_cifar(rank, world_size, config, console):
 
         if epoch < config.training_contrastive.twostage_epoch:
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
-                                                    config, console)
+                                                    config, console, profiling_context)
         else:
             if epoch == config.training_contrastive.twostage_epoch:
                 superclass_feats = cal_feats(model, train_loader, leaf_to_superclass_dict, config)
@@ -829,7 +829,7 @@ def train_cifar(rank, world_size, config, console):
                         new_proco_loss.estimator.Amount[node_id] = pseudo
 
             ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl,
-                                                    optimizer, config, console)
+                                                    optimizer, config, console, profiling_context)
 
             if epoch == config.training_contrastive.num_epoch - 1:
                 console.info('kappa values for superclasses   :' + str(new_proco_loss.estimator.kappa[100:-1]))
@@ -969,7 +969,7 @@ class _NoopProf:
         return ""
 
 
-def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, config, console):
+def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, config, console, profiling_context):
     model.train()
 
     if hasattr(criterion_scl, "_hook_before_epoch"):
@@ -984,142 +984,142 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
     gpu_step_times = []
 
     # ROCm/AMD: ProfilerActivity.CUDA produces empty output; use CPU-only
-    activities = [ProfilerActivity.CPU]
-    is_rocm = hasattr(torch.version, "hip") and torch.version.hip is not None
-    if torch.cuda.is_available() and not is_rocm:
-        activities.append(ProfilerActivity.CUDA)
-    prof_ctx = profile(activities=activities, record_shapes=True, profile_memory=True) if epoch == 0 else contextlib.nullcontext(_NoopProf())
+    # activities = [ProfilerActivity.CPU]
+    # is_rocm = hasattr(torch.version, "hip") and torch.version.hip is not None
+    # if torch.cuda.is_available() and not is_rocm:
+    #     activities.append(ProfilerActivity.CUDA)
+    # prof_ctx = profile(activities=activities, record_shapes=True, profile_memory=True) if epoch == 0 else contextlib.nullcontext(_NoopProf())
 
     end = time.time()
     prof_result = None
-    with prof_ctx as prof:
-        for batch_idx, data in enumerate(train_loader):
-            if len(data) == 3:
-                images, labels, _ = data
-            elif len(data) == 2:
-                images, labels = data
+    # with prof_ctx as prof:
+    for batch_idx, data in enumerate(train_loader):
+        if len(data) == 3:
+            images, labels, _ = data
+        elif len(data) == 2:
+            images, labels = data
+        else:
+            raise ValueError("Unexpected number of elements returned by train_loader.")
+
+        batch_size = labels.shape[0]
+        labels = labels.to(config.device)
+
+        mini_batch_size = batch_size // config.training_contrastive.accumulation_steps
+
+        images_0_mini_batches = torch.split(images[0], mini_batch_size)
+        images_1_mini_batches = torch.split(images[1], mini_batch_size)
+        images_2_mini_batches = torch.split(images[2], mini_batch_size)
+        labels_mini_batches = torch.split(labels, mini_batch_size)
+
+        if torch.cuda.is_available():
+            gpu_start = torch.cuda.Event(enable_timing=True)
+            gpu_end = torch.cuda.Event(enable_timing=True)
+            gpu_start.record()
+
+        optimizer.zero_grad()
+
+        aggregated_logits = []
+
+        for i in range(len(images_0_mini_batches)):
+            mini_images = torch.cat([images_0_mini_batches[i], images_1_mini_batches[i], images_2_mini_batches[i]],
+                                    dim=0)
+            mini_labels = labels_mini_batches[i]
+
+            mini_images, mini_labels = mini_images.to(config.device), mini_labels.to(config.device)
+
+            feat_mlp, ce_logits, _ = model(mini_images)
+            _, f2, f3 = torch.split(feat_mlp, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
+            ce_logits, _, __ = torch.split(ce_logits, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
+
+            contrast_logits1 = criterion_scl(f2, mini_labels)
+            contrast_logits2 = criterion_scl(f3, mini_labels)
+
+            contrast_logits1, contrast_logits2 = contrast_logits1.to(config.device), contrast_logits2.to(config.device)
+
+            contrast_logits = (contrast_logits1 + contrast_logits2) / 2
+
+            scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
+            ce_loss = criterion_ce(ce_logits, mini_labels)
+
+            alpha = 1
+            if epoch > 200:
+                lambda_ = 0
             else:
-                raise ValueError("Unexpected number of elements returned by train_loader.")
+                lambda_ = 1
+            logits = ce_logits + alpha * contrast_logits
+            loss = lambda_ * ce_loss + alpha * scl_loss
 
-            batch_size = labels.shape[0]
-            labels = labels.to(config.device)
+            # Accumulate gradients
+            loss.backward()
+            aggregated_logits.append(logits)
 
-            mini_batch_size = batch_size // config.training_contrastive.accumulation_steps
+        optimizer.step()
+        aggregated_logits = torch.cat(aggregated_logits, dim=0)
+        aggregated_logits = aggregated_logits.to(config.device)
 
-            images_0_mini_batches = torch.split(images[0], mini_batch_size)
-            images_1_mini_batches = torch.split(images[1], mini_batch_size)
-            images_2_mini_batches = torch.split(images[2], mini_batch_size)
-            labels_mini_batches = torch.split(labels, mini_batch_size)
+        if torch.cuda.is_available():
+            gpu_end.record()
+            torch.cuda.synchronize()
+            gpu_step_times.append(gpu_start.elapsed_time(gpu_end))
 
-            if torch.cuda.is_available():
-                gpu_start = torch.cuda.Event(enable_timing=True)
-                gpu_end = torch.cuda.Event(enable_timing=True)
-                gpu_start.record()
+        ce_loss_all.update(ce_loss.item(), batch_size)
+        scl_loss_all.update(scl_loss.item(), batch_size)
 
-            optimizer.zero_grad()
+        acc1 = accuracy(aggregated_logits, labels, topk=(1,))
+        top1.update(acc1[0].item(), batch_size)
+        profiling_context.step()
+    # optimizer.zero_grad()
+    # loss.backward()
+    # optimizer.step()
 
-            aggregated_logits = []
+        batch_time.update(time.time() - end)
+        end = time.time()
 
-            for i in range(len(images_0_mini_batches)):
-                mini_images = torch.cat([images_0_mini_batches[i], images_1_mini_batches[i], images_2_mini_batches[i]],
-                                        dim=0)
-                mini_labels = labels_mini_batches[i]
+        # # for debug
+        # from tools.image import save_img
+        # save_img(images, batch_idx, epoch, training_path/"augmented")
 
-                mini_images, mini_labels = mini_images.to(config.device), mini_labels.to(config.device)
+        # if batch_idx % 20 == 0:
+        #     output = ('Epoch: [{0}][{1}/{2}] \t'
+        #               'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+        #               'CE_Loss {ce_loss.val:.4f} ({ce_loss.avg:.4f})\t'
+        #               'SCL_Loss {scl_loss.val:.4f} ({scl_loss.avg:.4f})\t'
+        #               'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
+        #         epoch, batch_idx, len(train_loader), batch_time=batch_time,
+        #         ce_loss=ce_loss_all, scl_loss=scl_loss_all, top1=top1, ))  # TODO
+        #     print(output)
 
-                feat_mlp, ce_logits, _ = model(mini_images)
-                _, f2, f3 = torch.split(feat_mlp, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
-                ce_logits, _, __ = torch.split(ce_logits, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
+        # if epoch == 0:
+        #     prof_result = prof
+        #     if torch.cuda.is_available() and not is_rocm:
+        #         torch.cuda.synchronize()
 
-                contrast_logits1 = criterion_scl(f2, mini_labels)
-                contrast_logits2 = criterion_scl(f3, mini_labels)
+    # # Access profiler results after context exit (required on NVIDIA)
+    # if epoch == 0 and prof_result is not None and hasattr(prof_result, "key_averages"):
+    #     try:
+    #         sort_by = "cuda_time_total" if (torch.cuda.is_available() and not is_rocm) else "cpu_time_total"
+    #         prof_table = prof_result.key_averages().table(sort_by=sort_by, row_limit=30)
+    #         if not prof_table or not prof_table.strip():
+    #             prof_table = prof_result.key_averages().table(sort_by="self_cpu_time_total", row_limit=30)
+    #         console.info(f"\n--- PyTorch Profiler (CPU/GPU) ---\n{prof_table}")
+    #     except RuntimeError:
+    #         console.info("PyTorch Profiler: results not available (NVIDIA async)")
 
-                contrast_logits1, contrast_logits2 = contrast_logits1.to(config.device), contrast_logits2.to(config.device)
+    # console.info(f"CE loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {ce_loss_all.avg:.4f} ")
+    # console.info(
+    #     f"SCL loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {scl_loss_all.avg:.4f} ")
+    # console.info(f"acc train top1 [{epoch + 1}/{config.training_contrastive.num_epoch}] - Acc: {top1.avg:.4f} ")
 
-                contrast_logits = (contrast_logits1 + contrast_logits2) / 2
-
-                scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
-                ce_loss = criterion_ce(ce_logits, mini_labels)
-
-                alpha = 1
-                if epoch > 200:
-                    lambda_ = 0
-                else:
-                    lambda_ = 1
-                logits = ce_logits + alpha * contrast_logits
-                loss = lambda_ * ce_loss + alpha * scl_loss
-
-                # Accumulate gradients
-                loss.backward()
-                aggregated_logits.append(logits)
-
-            optimizer.step()
-            aggregated_logits = torch.cat(aggregated_logits, dim=0)
-            aggregated_logits = aggregated_logits.to(config.device)
-
-            if torch.cuda.is_available():
-                gpu_end.record()
-                torch.cuda.synchronize()
-                gpu_step_times.append(gpu_start.elapsed_time(gpu_end))
-
-            ce_loss_all.update(ce_loss.item(), batch_size)
-            scl_loss_all.update(scl_loss.item(), batch_size)
-
-            acc1 = accuracy(aggregated_logits, labels, topk=(1,))
-            top1.update(acc1[0].item(), batch_size)
-
-        # optimizer.zero_grad()
-        # loss.backward()
-        # optimizer.step()
-
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            # # for debug
-            # from tools.image import save_img
-            # save_img(images, batch_idx, epoch, training_path/"augmented")
-
-            # if batch_idx % 20 == 0:
-            #     output = ('Epoch: [{0}][{1}/{2}] \t'
-            #               'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-            #               'CE_Loss {ce_loss.val:.4f} ({ce_loss.avg:.4f})\t'
-            #               'SCL_Loss {scl_loss.val:.4f} ({scl_loss.avg:.4f})\t'
-            #               'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-            #         epoch, batch_idx, len(train_loader), batch_time=batch_time,
-            #         ce_loss=ce_loss_all, scl_loss=scl_loss_all, top1=top1, ))  # TODO
-            #     print(output)
-
-        if epoch == 0:
-            prof_result = prof
-            if torch.cuda.is_available() and not is_rocm:
-                torch.cuda.synchronize()
-
-    # Access profiler results after context exit (required on NVIDIA)
-    if epoch == 0 and prof_result is not None and hasattr(prof_result, "key_averages"):
-        try:
-            sort_by = "cuda_time_total" if (torch.cuda.is_available() and not is_rocm) else "cpu_time_total"
-            prof_table = prof_result.key_averages().table(sort_by=sort_by, row_limit=30)
-            if not prof_table or not prof_table.strip():
-                prof_table = prof_result.key_averages().table(sort_by="self_cpu_time_total", row_limit=30)
-            console.info(f"\n--- PyTorch Profiler (CPU/GPU) ---\n{prof_table}")
-        except RuntimeError:
-            console.info("PyTorch Profiler: results not available (NVIDIA async)")
-
-    console.info(f"CE loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {ce_loss_all.avg:.4f} ")
-    console.info(
-        f"SCL loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {scl_loss_all.avg:.4f} ")
-    console.info(f"acc train top1 [{epoch + 1}/{config.training_contrastive.num_epoch}] - Acc: {top1.avg:.4f} ")
-
-    if torch.cuda.is_available() and gpu_step_times:
-        avg_step_ms = sum(gpu_step_times) / len(gpu_step_times)
-        total_samples = len(gpu_step_times) * config.training_contrastive.batch_size
-        total_time_sec = sum(gpu_step_times) / 1000.0
-        throughput = total_samples / total_time_sec if total_time_sec > 0 else 0
-        peak_mem_gb = torch.cuda.max_memory_allocated() / 1e9
-        console.info(
-            f"GPU [epoch {epoch + 1}] - Step: {avg_step_ms:.2f} ms | Peak mem: {peak_mem_gb:.2f} GB | "
-            f"Throughput: {throughput:.1f} samples/sec"
-        )
+    # if torch.cuda.is_available() and gpu_step_times:
+    #     avg_step_ms = sum(gpu_step_times) / len(gpu_step_times)
+    #     total_samples = len(gpu_step_times) * config.training_contrastive.batch_size
+    #     total_time_sec = sum(gpu_step_times) / 1000.0
+    #     throughput = total_samples / total_time_sec if total_time_sec > 0 else 0
+    #     peak_mem_gb = torch.cuda.max_memory_allocated() / 1e9
+    #     console.info(
+    #         f"GPU [epoch {epoch + 1}] - Step: {avg_step_ms:.2f} ms | Peak mem: {peak_mem_gb:.2f} GB | "
+    #         f"Throughput: {throughput:.1f} samples/sec"
+    #     )
 
     return ce_loss_all, scl_loss_all, top1
 
