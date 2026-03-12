@@ -947,18 +947,18 @@ def train_cifar(rank, world_size, config, console):
         console.info(report)
         console.save_log(config.training_path)
 
-        console.info('************* Plot T-sne *************')
-
-        plot_tsne_from_validate(
-            all_features=all_features,
-            total_labels=total_labels,
-            class_to_superclass=leaf_to_superclass_dict,
-            leaf_class_names=leaf_class_names,
-            super_class_names=super_class_names,
-            title_prefix="ValSet",
-            save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
-            epoch=epoch  # e.g. if you're at epoch 20
-        )
+        # console.info('************* Plot T-sne *************')
+        #
+        # plot_tsne_from_validate(
+        #     all_features=all_features,
+        #     total_labels=total_labels,
+        #     class_to_superclass=leaf_to_superclass_dict,
+        #     leaf_class_names=leaf_class_names,
+        #     super_class_names=super_class_names,
+        #     title_prefix="ValSet",
+        #     save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
+        #     epoch=epoch  # e.g. if you're at epoch 20
+        # )
 
 
 class _NoopProf:
