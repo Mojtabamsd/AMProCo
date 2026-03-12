@@ -28,7 +28,7 @@ from dataset.cifar import CIFAR100_SUPERCLASSES
 import time
 import contextlib
 import torch.nn.functional as F
-from torch.profiler import profile, ProfilerActivity
+from torch.profiler import profile, ProfilerActivity, schedule
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 import numpy as np
@@ -105,28 +105,40 @@ def train_contrastive(config_path, input_path, output_path, torch_profile):
 
     # dist.init_process_group(backend='gloo', init_method='env://', world_size=config.world_size, rank=rank)
 
-    if torch_profile:
-        from torch.profiler import profile, ProfilerActivity, schedule
-        this_schedule = schedule(skip_first=3, wait=5, warmup=1, active=3, repeat=1)
-        profiling_context = profile(
-            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-            record_shapes=True,
-            schedule=this_schedule,
-        )
-    else:
-        import contextlib
-        profiling_context = contextlib.nullcontext()
-    if config.training_contrastive.dataset == 'uvp':
-        if world_size > 1:
-            mp.spawn(train_uvp, args=(world_size, config, console, profiling_context), nprocs=world_size, join=True)
+        if torch_profile:
+            this_schedule = schedule(skip_first=3, wait=5, warmup=1, active=3, repeat=1)
+            with profile(
+                    activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                    record_shapes=True,
+                    schedule=this_schedule,
+            ) as prof:
+                if config.training_contrastive.dataset == 'uvp':
+                    if world_size > 1:
+                        mp.spawn(train_uvp, args=(world_size, config, console, prof), nprocs=world_size, join=True)
+                    else:
+                        train_uvp(config.base.gpu_index, world_size, config, console, prof)
+                elif config.training_contrastive.dataset == 'cifar100':
+                    if world_size > 1:
+                        mp.spawn(train_cifar, args=(world_size, config, console, torch_profile, prof),
+                                 nprocs=world_size, join=True)
+                    else:
+                        train_cifar(config.base.gpu_index, world_size, config, console, torch_profile, prof)
+                prof.export_chrome_trace(str(Path(config.training_path) / "trace.json"))
         else:
-            train_uvp(config.base.gpu_index, world_size, config, console, profiling_context)
-
-    elif config.training_contrastive.dataset == 'cifar100':
-        if world_size > 1:
-            mp.spawn(train_cifar, args=(world_size, config, console, profiling_context), nprocs=world_size, join=True)
-        else:
-            train_cifar(config.base.gpu_index, world_size, config, console, torch_profile, profiling_context)
+            import contextlib
+            profiling_context = contextlib.nullcontext()
+            if config.training_contrastive.dataset == 'uvp':
+                if world_size > 1:
+                    mp.spawn(train_uvp, args=(world_size, config, console, profiling_context), nprocs=world_size,
+                             join=True)
+                else:
+                    train_uvp(config.base.gpu_index, world_size, config, console, profiling_context)
+            elif config.training_contrastive.dataset == 'cifar100':
+                if world_size > 1:
+                    mp.spawn(train_cifar, args=(world_size, config, console, torch_profile, profiling_context),
+                             nprocs=world_size, join=True)
+                else:
+                    train_cifar(config.base.gpu_index, world_size, config, console, torch_profile, profiling_context)
 
 
 def setup(rank, world_size):
@@ -897,6 +909,10 @@ def train_cifar(rank, world_size, config, console, torch_profile, profiling_cont
 
         if torch_profile:
             profiling_context.export_chrome_trace(f"trace.json")
+
+        if torch_profile and hasattr(profiling_context, "export_chrome_trace"):
+            profiling_context.export_chrome_trace(f"trace.json")
+
     if rank != -1:
         # Create a plot of the loss values
         plot_loss(ce_loss_all_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='CE_loss.png')
