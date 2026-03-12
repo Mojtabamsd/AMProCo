@@ -35,7 +35,7 @@ import numpy as np
 from tools.visualization import plot_tsne_from_validate
 
 
-def train_contrastive(config_path, input_path, output_path, profiling_context):
+def train_contrastive(config_path, input_path, output_path, torch_profile):
 
     config = Configuration(config_path, input_path, output_path)
     config.phase = 'train'      # will train with whole dataset and testing results if there is a test file
@@ -105,6 +105,17 @@ def train_contrastive(config_path, input_path, output_path, profiling_context):
 
     # dist.init_process_group(backend='gloo', init_method='env://', world_size=config.world_size, rank=rank)
 
+    if torch_profile:
+        from torch.profiler import profile, ProfilerActivity, schedule
+        this_schedule = schedule(skip_first=3, wait=5, warmup=1, active=3, repeat=1)
+        profiling_context = profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            record_shapes=True,
+            schedule=this_schedule,
+        )
+    else:
+        import contextlib
+        profiling_context = contextlib.nullcontext()
     if config.training_contrastive.dataset == 'uvp':
         if world_size > 1:
             mp.spawn(train_uvp, args=(world_size, config, console, profiling_context), nprocs=world_size, join=True)
@@ -115,7 +126,7 @@ def train_contrastive(config_path, input_path, output_path, profiling_context):
         if world_size > 1:
             mp.spawn(train_cifar, args=(world_size, config, console, profiling_context), nprocs=world_size, join=True)
         else:
-            train_cifar(config.base.gpu_index, world_size, config, console, profiling_context)
+            train_cifar(config.base.gpu_index, world_size, config, console, torch_profile, profiling_context)
 
 
 def setup(rank, world_size):
@@ -340,132 +351,133 @@ def train_uvp(rank, world_size, config, console, profiling_context):
     best_acc1 = 0.0
 
     # Training loop
-    for epoch in range(latest_epoch, config.training_contrastive.num_epoch):
+    with profiling_context:
+        for epoch in range(latest_epoch, config.training_contrastive.num_epoch):
 
-        if is_distributed and sampler_train is not None:
-            sampler_train.set_epoch(epoch)
+            if is_distributed and sampler_train is not None:
+                sampler_train.set_epoch(epoch)
 
-        adjust_lr(optimizer, epoch, config)
+            adjust_lr(optimizer, epoch, config)
 
-        if epoch < config.training_contrastive.twostage_epoch:
-            ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
-                                                    config, console)
-        else:
-            if epoch == config.training_contrastive.twostage_epoch:
-                superclass_feats = cal_feats(model, train_loader, leaf_to_superclass_dict, config)
-                p_star, mixture_params = cal_params(superclass_feats, config.training_contrastive.superclass_num,
-                                                    config.training_contrastive.k_max,
-                                                    config.training_contrastive.delta_min)
+            if epoch < config.training_contrastive.twostage_epoch:
+                ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
+                                                        config, console, profiling_context)
+            else:
+                if epoch == config.training_contrastive.twostage_epoch:
+                    superclass_feats = cal_feats(model, train_loader, leaf_to_superclass_dict, config)
+                    p_star, mixture_params = cal_params(superclass_feats, config.training_contrastive.superclass_num,
+                                                        config.training_contrastive.k_max,
+                                                        config.training_contrastive.delta_min)
 
-                console.info('super class names   :' + str(super_class_names))
-                console.info('P*   :' + str(p_star))
+                    console.info('super class names   :' + str(super_class_names))
+                    console.info('P*   :' + str(p_star))
 
-                offset = train_dataset.num_class
-                superclass_to_protos = {}
-                for i, (sname, leaf_list) in enumerate(super_classes_id):
-                    p_i = p_star[i]
-                    proto_list = []
-                    for comp in range(p_i):
-                        proto_list.append(offset)
-                        offset += 1
-                    superclass_to_protos[i] = proto_list
+                    offset = train_dataset.num_class
+                    superclass_to_protos = {}
+                    for i, (sname, leaf_list) in enumerate(super_classes_id):
+                        p_i = p_star[i]
+                        proto_list = []
+                        for comp in range(p_i):
+                            proto_list.append(offset)
+                            offset += 1
+                        superclass_to_protos[i] = proto_list
 
-                root_node_id = offset
-                offset += 1
-                num_nodes = train_dataset.num_class + sum(p_star) + 1
+                    root_node_id = offset
+                    offset += 1
+                    num_nodes = train_dataset.num_class + sum(p_star) + 1
 
-                leaf_path_map = {}
-                for i, (sname, leaf_list) in enumerate(super_classes_id):
-                    proto_ids = superclass_to_protos[i]
-                    for leaf_id in leaf_list:
-                        # path => [root_node_id] + proto_ids + [leaf_id]
-                        leaf_path_map[leaf_id] = [root_node_id] + proto_ids + [leaf_id]
+                    leaf_path_map = {}
+                    for i, (sname, leaf_list) in enumerate(super_classes_id):
+                        proto_ids = superclass_to_protos[i]
+                        for leaf_id in leaf_list:
+                            # path => [root_node_id] + proto_ids + [leaf_id]
+                            leaf_path_map[leaf_id] = [root_node_id] + proto_ids + [leaf_id]
 
-                leaf_node_ids = list(range(train_dataset.num_class))
+                    leaf_node_ids = list(range(train_dataset.num_class))
 
-                new_proco_loss = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
-                                           temperature=config.training_contrastive.temp,
-                                           num_classes=num_nodes,
-                                           device=device)
+                    new_proco_loss = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
+                                            temperature=config.training_contrastive.temp,
+                                            num_classes=num_nodes,
+                                            device=device)
 
-                new_criterion_scl = HierarchicalProCoWrapper(
-                    proco_loss=new_proco_loss,
-                    leaf_node_ids=leaf_node_ids,
-                    leaf_path_map=leaf_path_map,
-                    num_nodes=num_nodes).to(device)
+                    new_criterion_scl = HierarchicalProCoWrapper(
+                        proco_loss=new_proco_loss,
+                        leaf_node_ids=leaf_node_ids,
+                        leaf_path_map=leaf_path_map,
+                        num_nodes=num_nodes).to(device)
 
-                for sc_idx in range(config.training_contrastive.superclass_num):
-                    p_i = p_star[sc_idx]
-                    proto_list = superclass_to_protos[sc_idx]
-                    for j in range(p_i):
-                        node_id = proto_list[j]
-                        (pi_j, mu_j, kappa_j) = mixture_params[sc_idx][j]
+                    for sc_idx in range(config.training_contrastive.superclass_num):
+                        p_i = p_star[sc_idx]
+                        proto_list = superclass_to_protos[sc_idx]
+                        for j in range(p_i):
+                            node_id = proto_list[j]
+                            (pi_j, mu_j, kappa_j) = mixture_params[sc_idx][j]
 
-                        mu_j = mu_j / (np.linalg.norm(mu_j) + 1e-12)
+                            mu_j = mu_j / (np.linalg.norm(mu_j) + 1e-12)
 
-                        new_proco_loss.estimator.Ave[node_id] = torch.from_numpy(mu_j).to(device)
-                        new_proco_loss.estimator.kappa[node_id] = torch.tensor(kappa_j, device=device)
+                            new_proco_loss.estimator.Ave[node_id] = torch.from_numpy(mu_j).to(device)
+                            new_proco_loss.estimator.kappa[node_id] = torch.tensor(kappa_j, device=device)
 
-                        superclass_size = len(superclass_feats[sc_idx])
-                        pseudo = max(int(pi_j * superclass_size), 50)
+                            superclass_size = len(superclass_feats[sc_idx])
+                            pseudo = max(int(pi_j * superclass_size), 50)
 
-                        new_proco_loss.estimator.Amount[node_id] = pseudo
-
-
-            ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl,
-                                                    optimizer, config, console)
-
-            if epoch == config.training_contrastive.num_epoch - 1:
-                console.info('kappa values for superclasses   :' + str(new_proco_loss.estimator.kappa[100:-1]))
+                            new_proco_loss.estimator.Amount[node_id] = pseudo
 
 
-        ce_loss_all_avg.append(ce_loss_all.avg)
-        scl_loss_all_avg.append(scl_loss_all.avg)
-        top1_avg.append(top1.avg)
+                ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl,
+                                                        optimizer, config, console)
 
-        plot_loss(ce_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
-                  name='CE_loss.png')
-        plot_loss(scl_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
-                  name='SCL_loss.png')
-        plot_loss(top1_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='ACC.png')
+                if epoch == config.training_contrastive.num_epoch - 1:
+                    console.info('kappa values for superclasses   :' + str(new_proco_loss.estimator.kappa[100:-1]))
 
-        if is_distributed:
-            dist.barrier()
 
-        if rank != -1:
-            acc1, many, med, few, total_labels, all_preds, all_features = validate(train_loader, val_loader, model, criterion_ce, config, console)
+            ce_loss_all_avg.append(ce_loss_all.avg)
+            scl_loss_all_avg.append(scl_loss_all.avg)
+            top1_avg.append(top1.avg)
 
-            is_best = acc1 > best_acc1
-            best_acc1 = max(acc1, best_acc1)
-            if is_best:
-                best_many = many
-                best_med = med
-                best_few = few
-                console.info('Epoch: {:.3f}, Best Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: '
-                             '{:.3f}'.format(round(epoch+1), best_acc1, best_many, best_med, best_few))
+            plot_loss(ce_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                    name='CE_loss.png')
+            plot_loss(scl_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                    name='SCL_loss.png')
+            plot_loss(top1_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='ACC.png')
 
-                # Save the model weights
-                saved_weights_best = f'model_weights_best.pth'
-                saved_weights_file_best = os.path.join(config.training_path, saved_weights_best)
+            if is_distributed:
+                dist.barrier()
 
-                console.info(f"Model weights saved to {saved_weights_file_best}")
-                torch.save(model.state_dict(), saved_weights_file_best)
+            if rank != -1:
+                acc1, many, med, few, total_labels, all_preds, all_features = validate(train_loader, val_loader, model, criterion_ce, config, console)
 
-            top1_val_avg.append(acc1)
-            plot_loss(top1_val_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
-                      name='ACC_validation.png')
+                is_best = acc1 > best_acc1
+                best_acc1 = max(acc1, best_acc1)
+                if is_best:
+                    best_many = many
+                    best_med = med
+                    best_few = few
+                    console.info('Epoch: {:.3f}, Best Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: '
+                                '{:.3f}'.format(round(epoch+1), best_acc1, best_many, best_med, best_few))
 
-            if epoch % 20 == 0:
-                plot_tsne_from_validate(
-                    all_features=all_features,
-                    total_labels=total_labels,
-                    class_to_superclass=leaf_to_superclass_dict,
-                    leaf_class_names=leaf_class_names,
-                    super_class_names=super_class_names,
-                    title_prefix="ValSet",
-                    save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
-                    epoch=epoch  # e.g. if you're at epoch 20
-                )
+                    # Save the model weights
+                    saved_weights_best = f'model_weights_best.pth'
+                    saved_weights_file_best = os.path.join(config.training_path, saved_weights_best)
+
+                    console.info(f"Model weights saved to {saved_weights_file_best}")
+                    torch.save(model.state_dict(), saved_weights_file_best)
+
+                top1_val_avg.append(acc1)
+                plot_loss(top1_val_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                        name='ACC_validation.png')
+
+                if epoch % 20 == 0:
+                    plot_tsne_from_validate(
+                        all_features=all_features,
+                        total_labels=total_labels,
+                        class_to_superclass=leaf_to_superclass_dict,
+                        leaf_class_names=leaf_class_names,
+                        super_class_names=super_class_names,
+                        title_prefix="ValSet",
+                        save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
+                        epoch=epoch  # e.g. if you're at epoch 20
+                    )
 
     if rank != -1:
         # Create a plot of the loss values
@@ -556,7 +568,7 @@ def train_uvp(rank, world_size, config, console, profiling_context):
         )
 
 
-def train_cifar(rank, world_size, config, console, profiling_context):
+def train_cifar(rank, world_size, config, console, torch_profile, profiling_context):
 
     if world_size > 1:
         setup(rank, world_size)
@@ -757,131 +769,134 @@ def train_cifar(rank, world_size, config, console, profiling_context):
     best_acc1 = 0.0
 
     # Training loop
-    for epoch in range(latest_epoch, config.training_contrastive.num_epoch):
+    with profiling_context:
+        for epoch in range(latest_epoch, config.training_contrastive.num_epoch):
 
-        if is_distributed and sampler_train is not None:
-            sampler_train.set_epoch(epoch)
+            if is_distributed and sampler_train is not None:
+                sampler_train.set_epoch(epoch)
 
-        adjust_lr(optimizer, epoch, config)
+            adjust_lr(optimizer, epoch, config)
 
-        if epoch < config.training_contrastive.twostage_epoch:
-            ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
-                                                    config, console, profiling_context)
-        else:
-            if epoch == config.training_contrastive.twostage_epoch:
-                superclass_feats = cal_feats(model, train_loader, leaf_to_superclass_dict, config)
-                p_star, mixture_params = cal_params(superclass_feats, config.training_contrastive.superclass_num,
-                                                    config.training_contrastive.k_max,
-                                                    config.training_contrastive.delta_min)
+            if epoch < config.training_contrastive.twostage_epoch:
+                ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer,
+                                                        config, console, profiling_context)
+            else:
+                if epoch == config.training_contrastive.twostage_epoch:
+                    superclass_feats = cal_feats(model, train_loader, leaf_to_superclass_dict, config)
+                    p_star, mixture_params = cal_params(superclass_feats, config.training_contrastive.superclass_num,
+                                                        config.training_contrastive.k_max,
+                                                        config.training_contrastive.delta_min)
 
-                console.info('super class names   :' + str(super_class_names))
-                console.info('P*   :' + str(p_star))
+                    console.info('super class names   :' + str(super_class_names))
+                    console.info('P*   :' + str(p_star))
 
-                offset = train_dataset.num_class
-                superclass_to_protos = {}
-                for i, (sname, leaf_list) in enumerate(super_classes_id):
-                    p_i = p_star[i]
-                    proto_list = []
-                    for comp in range(p_i):
-                        proto_list.append(offset)
-                        offset += 1
-                    superclass_to_protos[i] = proto_list
+                    offset = train_dataset.num_class
+                    superclass_to_protos = {}
+                    for i, (sname, leaf_list) in enumerate(super_classes_id):
+                        p_i = p_star[i]
+                        proto_list = []
+                        for comp in range(p_i):
+                            proto_list.append(offset)
+                            offset += 1
+                        superclass_to_protos[i] = proto_list
 
-                root_node_id = offset
-                offset += 1
-                num_nodes = train_dataset.num_class + sum(p_star) + 1
+                    root_node_id = offset
+                    offset += 1
+                    num_nodes = train_dataset.num_class + sum(p_star) + 1
 
-                leaf_path_map = {}
-                for i, (sname, leaf_list) in enumerate(super_classes_id):
-                    proto_ids = superclass_to_protos[i]
-                    for leaf_id in leaf_list:
-                        # path => [root_node_id] + proto_ids + [leaf_id]
-                        leaf_path_map[leaf_id] = [root_node_id] + proto_ids + [leaf_id]
+                    leaf_path_map = {}
+                    for i, (sname, leaf_list) in enumerate(super_classes_id):
+                        proto_ids = superclass_to_protos[i]
+                        for leaf_id in leaf_list:
+                            # path => [root_node_id] + proto_ids + [leaf_id]
+                            leaf_path_map[leaf_id] = [root_node_id] + proto_ids + [leaf_id]
 
-                leaf_node_ids = list(range(train_dataset.num_class))
+                    leaf_node_ids = list(range(train_dataset.num_class))
 
-                new_proco_loss = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
-                                           temperature=config.training_contrastive.temp,
-                                           num_classes=num_nodes,
-                                           device=device)
+                    new_proco_loss = ProCoLoss(contrast_dim=config.training_contrastive.feat_dim,
+                                            temperature=config.training_contrastive.temp,
+                                            num_classes=num_nodes,
+                                            device=device)
 
-                new_criterion_scl = HierarchicalProCoWrapper(
-                    proco_loss=new_proco_loss,
-                    leaf_node_ids=leaf_node_ids,
-                    leaf_path_map=leaf_path_map,
-                    num_nodes=num_nodes).to(device)
+                    new_criterion_scl = HierarchicalProCoWrapper(
+                        proco_loss=new_proco_loss,
+                        leaf_node_ids=leaf_node_ids,
+                        leaf_path_map=leaf_path_map,
+                        num_nodes=num_nodes).to(device)
 
-                for sc_idx in range(config.training_contrastive.superclass_num):
-                    p_i = p_star[sc_idx]
-                    proto_list = superclass_to_protos[sc_idx]
-                    for j in range(p_i):
-                        node_id = proto_list[j]
-                        (pi_j, mu_j, kappa_j) = mixture_params[sc_idx][j]
+                    for sc_idx in range(config.training_contrastive.superclass_num):
+                        p_i = p_star[sc_idx]
+                        proto_list = superclass_to_protos[sc_idx]
+                        for j in range(p_i):
+                            node_id = proto_list[j]
+                            (pi_j, mu_j, kappa_j) = mixture_params[sc_idx][j]
 
-                        mu_j = mu_j / (np.linalg.norm(mu_j) + 1e-12)
+                            mu_j = mu_j / (np.linalg.norm(mu_j) + 1e-12)
 
-                        new_proco_loss.estimator.Ave[node_id] = torch.from_numpy(mu_j).to(device)
-                        new_proco_loss.estimator.kappa[node_id] = torch.tensor(kappa_j, device=device)
+                            new_proco_loss.estimator.Ave[node_id] = torch.from_numpy(mu_j).to(device)
+                            new_proco_loss.estimator.kappa[node_id] = torch.tensor(kappa_j, device=device)
 
-                        superclass_size = len(superclass_feats[sc_idx])
-                        pseudo = max(int(pi_j * superclass_size), 50)
+                            superclass_size = len(superclass_feats[sc_idx])
+                            pseudo = max(int(pi_j * superclass_size), 50)
 
-                        new_proco_loss.estimator.Amount[node_id] = pseudo
+                            new_proco_loss.estimator.Amount[node_id] = pseudo
 
-            ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl,
-                                                    optimizer, config, console, profiling_context)
+                ce_loss_all, scl_loss_all, top1 = train(epoch, train_loader, model, criterion_ce, new_criterion_scl,
+                                                        optimizer, config, console, profiling_context)
 
-            if epoch == config.training_contrastive.num_epoch - 1:
-                console.info('kappa values for superclasses   :' + str(new_proco_loss.estimator.kappa[100:-1]))
+                if epoch == config.training_contrastive.num_epoch - 1:
+                    console.info('kappa values for superclasses   :' + str(new_proco_loss.estimator.kappa[100:-1]))
 
-        ce_loss_all_avg.append(ce_loss_all.avg)
-        scl_loss_all_avg.append(scl_loss_all.avg)
-        top1_avg.append(top1.avg)
+            ce_loss_all_avg.append(ce_loss_all.avg)
+            scl_loss_all_avg.append(scl_loss_all.avg)
+            top1_avg.append(top1.avg)
 
-        plot_loss(ce_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
-                  name='CE_loss.png')
-        plot_loss(scl_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
-                  name='SCL_loss.png')
-        plot_loss(top1_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='ACC.png')
+            plot_loss(ce_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                    name='CE_loss.png')
+            plot_loss(scl_loss_all_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                    name='SCL_loss.png')
+            plot_loss(top1_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path, name='ACC.png')
 
-        if is_distributed:
-            dist.barrier()
+            if is_distributed:
+                dist.barrier()
 
-        if rank != -1:
-            acc1, many, med, few, total_labels, all_preds, all_features = validate(train_loader, val_loader, model, criterion_ce, config, console)
+            if rank != -1:
+                acc1, many, med, few, total_labels, all_preds, all_features = validate(train_loader, val_loader, model, criterion_ce, config, console)
 
-            is_best = acc1 > best_acc1
-            best_acc1 = max(acc1, best_acc1)
-            if is_best:
-                best_many = many
-                best_med = med
-                best_few = few
-                console.info('Epoch: {:.3f}, Best Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: '
-                             '{:.3f}'.format(round(epoch+1), best_acc1, best_many, best_med, best_few))
+                is_best = acc1 > best_acc1
+                best_acc1 = max(acc1, best_acc1)
+                if is_best:
+                    best_many = many
+                    best_med = med
+                    best_few = few
+                    console.info('Epoch: {:.3f}, Best Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: '
+                                '{:.3f}'.format(round(epoch+1), best_acc1, best_many, best_med, best_few))
 
-                # Save the model weights
-                saved_weights_best = f'model_weights_best.pth'
-                saved_weights_file_best = os.path.join(config.training_path, saved_weights_best)
+                    # Save the model weights
+                    saved_weights_best = f'model_weights_best.pth'
+                    saved_weights_file_best = os.path.join(config.training_path, saved_weights_best)
 
-                console.info(f"Model weights saved to {saved_weights_file_best}")
-                torch.save(model.state_dict(), saved_weights_file_best)
+                    console.info(f"Model weights saved to {saved_weights_file_best}")
+                    torch.save(model.state_dict(), saved_weights_file_best)
 
-            top1_val_avg.append(acc1)
-            plot_loss(top1_val_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
-                      name='ACC_validation.png')
+                top1_val_avg.append(acc1)
+                plot_loss(top1_val_avg, num_epoch=(epoch - latest_epoch) + 1, training_path=config.training_path,
+                        name='ACC_validation.png')
 
-            # if epoch % 20 == 0:
-            #     plot_tsne_from_validate(
-            #         all_features=all_features,
-            #         total_labels=total_labels,
-            #         class_to_superclass=leaf_to_superclass_dict,
-            #         leaf_class_names=leaf_class_names,
-            #         super_class_names=super_class_names,
-            #         title_prefix="ValSet",
-            #         save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
-            #         epoch=epoch  # e.g. if you're at epoch 20
-            #     )
+                # if epoch % 20 == 0:
+                #     plot_tsne_from_validate(
+                #         all_features=all_features,
+                #         total_labels=total_labels,
+                #         class_to_superclass=leaf_to_superclass_dict,
+                #         leaf_class_names=leaf_class_names,
+                #         super_class_names=super_class_names,
+                #         title_prefix="ValSet",
+                #         save_dir=os.path.join(config.training_path, 'tsne'),  # e.g. your desired directory
+                #         epoch=epoch  # e.g. if you're at epoch 20
+                #     )
 
+        if torch_profile:
+            profiling_context.export_chrome_trace(f"trace.json")
     if rank != -1:
         # Create a plot of the loss values
         plot_loss(ce_loss_all_avg, num_epoch=(config.training_contrastive.num_epoch - latest_epoch), training_path=config.training_path, name='CE_loss.png')
@@ -1067,7 +1082,6 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
 
         acc1 = accuracy(aggregated_logits, labels, topk=(1,))
         top1.update(acc1[0].item(), batch_size)
-        profiling_context.step()
     # optimizer.zero_grad()
     # loss.backward()
     # optimizer.step()
@@ -1120,6 +1134,7 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
     #         f"GPU [epoch {epoch + 1}] - Step: {avg_step_ms:.2f} ms | Peak mem: {peak_mem_gb:.2f} GB | "
     #         f"Throughput: {throughput:.1f} samples/sec"
     #     )
+    profiling_context.step()
 
     return ce_loss_all, scl_loss_all, top1
 

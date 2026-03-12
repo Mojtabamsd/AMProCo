@@ -70,35 +70,21 @@ def main(args=None):
         sys.exit(2)
     args = parser.parse_args(args)
 
-    if args.torch_profile:
-        from torch.profiler import profile, ProfilerActivity, schedule
-        this_schedule = schedule(skip_first=3, wait=5, warmup=1, active=3, repeat=1)
-        profiling_context = profile(
-            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-            record_shapes=True,
-            schedule=this_schedule,
-        )
-    else:
-        import contextlib
-        profiling_context = contextlib.nullcontext()
-
-    args.func(args, profiling_context)
+    args.func(args)
 def call_sampling(args):
     sampling(args.configuration_file)
 
 
-def call_training_contrastive(args, profiling_context):
-    with profiling_context:
-        train_contrastive(
-            args.configuration_file,
-            args.input_folder,
-            args.output_folder,
-            profiling_context=profiling_context,
-        )
+def call_training_contrastive(args):
+    train_contrastive(
+        args.configuration_file,
+        args.input_folder,
+        args.output_folder,
+        args.torch_profile,
+    )
 
-def call_prediction(args, profiling_context):
-    with profiling_context:
-        prediction(args.configuration_file, args.input_folder, args.output_folder)
+def call_prediction(args):
+    prediction(args.configuration_file, args.input_folder, args.output_folder)
 
 
 if __name__ == "__main__":
