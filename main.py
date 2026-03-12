@@ -30,6 +30,12 @@ def add_arguments(obj):
         help="Output path to write the results.",
     )
 
+    obj.add_argument(
+        "--torch-profile",
+        action="store_true",
+        help="Activate the pytorch profiler"
+    )
+
 
 def main(args=None):
 
@@ -63,16 +69,19 @@ def main(args=None):
         parser.print_help(sys.stderr)
         sys.exit(2)
     args = parser.parse_args(args)
+
     args.func(args)
-
-
 def call_sampling(args):
     sampling(args.configuration_file)
 
 
 def call_training_contrastive(args):
-    train_contrastive(args.configuration_file, args.input_folder, args.output_folder)
-
+    train_contrastive(
+        args.configuration_file,
+        args.input_folder,
+        args.output_folder,
+        args.torch_profile,
+    )
 
 def call_prediction(args):
     prediction(args.configuration_file, args.input_folder, args.output_folder)

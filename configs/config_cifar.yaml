@@ -29,7 +29,7 @@ training_contrastive:
   architecture_type: 'resnet32' # choose 'resnet32'
   batch_size: 256
   accumulation_steps: 1  #for mini batch size --- the training performs like batch_size // accumulation_steps i.e. 256=64*4
-  num_workers: 10
+  num_workers: 5
   gray: True
   target_size: [32, 32]  #image target size
   padding: True # pad image to preserve aspect ratio
