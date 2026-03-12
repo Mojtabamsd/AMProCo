@@ -1067,13 +1067,13 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
 
         acc1 = accuracy(aggregated_logits, labels, topk=(1,))
         top1.update(acc1[0].item(), batch_size)
-        profiling_context.step()
+    profiling_context.step()
     # optimizer.zero_grad()
     # loss.backward()
     # optimizer.step()
 
-        batch_time.update(time.time() - end)
-        end = time.time()
+    batch_time.update(time.time() - end)
+    end = time.time()
 
         # # for debug
         # from tools.image import save_img
