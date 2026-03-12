@@ -1023,81 +1023,81 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
 
     end = time.time()
     prof_result = None
-    # with prof_ctx as prof:
-    for batch_idx, data in enumerate(train_loader):
-        if len(data) == 3:
-            images, labels, _ = data
-        elif len(data) == 2:
-            images, labels = data
-        else:
-            raise ValueError("Unexpected number of elements returned by train_loader.")
-
-        batch_size = labels.shape[0]
-        labels = labels.to(config.device)
-
-        mini_batch_size = batch_size // config.training_contrastive.accumulation_steps
-
-        images_0_mini_batches = torch.split(images[0], mini_batch_size)
-        images_1_mini_batches = torch.split(images[1], mini_batch_size)
-        images_2_mini_batches = torch.split(images[2], mini_batch_size)
-        labels_mini_batches = torch.split(labels, mini_batch_size)
-
-        if torch.cuda.is_available():
-            gpu_start = torch.cuda.Event(enable_timing=True)
-            gpu_end = torch.cuda.Event(enable_timing=True)
-            gpu_start.record()
-
-        optimizer.zero_grad()
-
-        aggregated_logits = []
-
-        for i in range(len(images_0_mini_batches)):
-            mini_images = torch.cat([images_0_mini_batches[i], images_1_mini_batches[i], images_2_mini_batches[i]],
-                                    dim=0)
-            mini_labels = labels_mini_batches[i]
-
-            mini_images, mini_labels = mini_images.to(config.device), mini_labels.to(config.device)
-
-            feat_mlp, ce_logits, _ = model(mini_images)
-            _, f2, f3 = torch.split(feat_mlp, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
-            ce_logits, _, __ = torch.split(ce_logits, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
-
-            contrast_logits1 = criterion_scl(f2, mini_labels)
-            contrast_logits2 = criterion_scl(f3, mini_labels)
-
-            contrast_logits1, contrast_logits2 = contrast_logits1.to(config.device), contrast_logits2.to(config.device)
-
-            contrast_logits = (contrast_logits1 + contrast_logits2) / 2
-
-            scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
-            ce_loss = criterion_ce(ce_logits, mini_labels)
-
-            alpha = 1
-            if epoch > 200:
-                lambda_ = 0
+    with profiling_context:
+        for batch_idx, data in enumerate(train_loader):
+            if len(data) == 3:
+                images, labels, _ = data
+            elif len(data) == 2:
+                images, labels = data
             else:
-                lambda_ = 1
-            logits = ce_logits + alpha * contrast_logits
-            loss = lambda_ * ce_loss + alpha * scl_loss
+                raise ValueError("Unexpected number of elements returned by train_loader.")
 
-            # Accumulate gradients
-            loss.backward()
-            aggregated_logits.append(logits)
+            batch_size = labels.shape[0]
+            labels = labels.to(config.device)
 
-        optimizer.step()
-        aggregated_logits = torch.cat(aggregated_logits, dim=0)
-        aggregated_logits = aggregated_logits.to(config.device)
+            mini_batch_size = batch_size // config.training_contrastive.accumulation_steps
 
-        if torch.cuda.is_available():
-            gpu_end.record()
-            torch.cuda.synchronize()
-            gpu_step_times.append(gpu_start.elapsed_time(gpu_end))
+            images_0_mini_batches = torch.split(images[0], mini_batch_size)
+            images_1_mini_batches = torch.split(images[1], mini_batch_size)
+            images_2_mini_batches = torch.split(images[2], mini_batch_size)
+            labels_mini_batches = torch.split(labels, mini_batch_size)
 
-        ce_loss_all.update(ce_loss.item(), batch_size)
-        scl_loss_all.update(scl_loss.item(), batch_size)
+            if torch.cuda.is_available():
+                gpu_start = torch.cuda.Event(enable_timing=True)
+                gpu_end = torch.cuda.Event(enable_timing=True)
+                gpu_start.record()
 
-        acc1 = accuracy(aggregated_logits, labels, topk=(1,))
-        top1.update(acc1[0].item(), batch_size)
+            optimizer.zero_grad()
+
+            aggregated_logits = []
+
+            for i in range(len(images_0_mini_batches)):
+                mini_images = torch.cat([images_0_mini_batches[i], images_1_mini_batches[i], images_2_mini_batches[i]],
+                                        dim=0)
+                mini_labels = labels_mini_batches[i]
+
+                mini_images, mini_labels = mini_images.to(config.device), mini_labels.to(config.device)
+
+                feat_mlp, ce_logits, _ = model(mini_images)
+                _, f2, f3 = torch.split(feat_mlp, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
+                ce_logits, _, __ = torch.split(ce_logits, [mini_batch_size, mini_batch_size, mini_batch_size], dim=0)
+
+                contrast_logits1 = criterion_scl(f2, mini_labels)
+                contrast_logits2 = criterion_scl(f3, mini_labels)
+
+                contrast_logits1, contrast_logits2 = contrast_logits1.to(config.device), contrast_logits2.to(config.device)
+
+                contrast_logits = (contrast_logits1 + contrast_logits2) / 2
+
+                scl_loss = (F.cross_entropy(contrast_logits1, mini_labels) + F.cross_entropy(contrast_logits2, mini_labels)) / 2
+                ce_loss = criterion_ce(ce_logits, mini_labels)
+
+                alpha = 1
+                if epoch > 200:
+                    lambda_ = 0
+                else:
+                    lambda_ = 1
+                logits = ce_logits + alpha * contrast_logits
+                loss = lambda_ * ce_loss + alpha * scl_loss
+
+                # Accumulate gradients
+                loss.backward()
+                aggregated_logits.append(logits)
+
+            optimizer.step()
+            aggregated_logits = torch.cat(aggregated_logits, dim=0)
+            aggregated_logits = aggregated_logits.to(config.device)
+
+            if torch.cuda.is_available():
+                gpu_end.record()
+                torch.cuda.synchronize()
+                gpu_step_times.append(gpu_start.elapsed_time(gpu_end))
+
+            ce_loss_all.update(ce_loss.item(), batch_size)
+            scl_loss_all.update(scl_loss.item(), batch_size)
+
+            acc1 = accuracy(aggregated_logits, labels, topk=(1,))
+            top1.update(acc1[0].item(), batch_size)
     profiling_context.step()
     # optimizer.zero_grad()
     # loss.backward()
