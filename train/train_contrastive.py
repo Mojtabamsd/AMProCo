@@ -1486,6 +1486,6 @@ def make_profiler(torch_profile):
     return profile(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
         record_shapes=True,
-        profile_memory=True
-        # schedule=schedule(skip_first=3, wait=5, warmup=1, active=3, repeat=1),
+        # profile_memory=True
+        schedule=schedule(skip_first=3, wait=5, warmup=1, active=3, repeat=1),
     )
