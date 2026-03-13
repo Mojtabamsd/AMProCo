@@ -641,7 +641,8 @@ def train_cifar(rank, world_size, config, console, torch_profile):
                               sampler=sampler_train,
                               shuffle=(not is_distributed),
                               num_workers=config.training_contrastive.num_workers,
-                              pin_memory=True)
+                              # pin_memory=True,
+                              persistent_workers=(config.training_contrastive.num_workers > 0))
 
     val_loader = DataLoader(
         val_dataset, batch_size=config.training_contrastive.batch_size, shuffle=False,
@@ -1157,7 +1158,8 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
 
             total_logits = torch.cat((total_logits, logits))
             total_labels = torch.cat((total_labels, labels))
-            all_features.append(feat_mlp.cpu().numpy())
+            # all_features.append(feat_mlp.cpu().numpy())
+            all_features.append(feat_mlp.detach())
 
             batch_time.update(time.time() - end)
 
@@ -1194,7 +1196,8 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
         console.info(
             'Validation: Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: {:.3f}'.format(acc1, many, med, few))
 
-        all_features = np.concatenate(all_features, axis=0)
+        # all_features = np.concatenate(all_features, axis=0)
+        all_features = np.concatenate(all_features, dim=0).cpu().numpy()
 
         return acc1, many, med, few, total_labels, all_preds, all_features
 
