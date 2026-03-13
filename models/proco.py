@@ -8,44 +8,51 @@ import numpy as np
 import torch.distributed as dist
 
 
-def miller_recurrence(nu, x):
+def miller_recurrence(nu, x, eps=1e-300):
+    x = x.to(torch.float64)
     device = x.device
-    I_n = torch.ones(1, dtype=torch.float64).to(device)
-    I_n1 = torch.zeros(1, dtype=torch.float64).to(device)
 
-    Estimat_n = [nu, nu+1]
-    scale0 = 0
-    scale1 = 0
-    scale = 0
+    I_n = torch.ones_like(x, dtype=torch.float64, device=device)
+    I_n1 = torch.zeros_like(x, dtype=torch.float64, device=device)
 
-    for i in range(2*nu, 0, -1):
-        I_n_tem, I_n1_tem = 2*i/x*I_n + I_n1, I_n
-        if torch.isinf(I_n_tem).any():
-            I_n1 /= I_n
-            scale += torch.log(I_n)
-            if i >= (nu+1):
-                scale0 += torch.log(I_n)
-                scale1 += torch.log(I_n)
-            elif i == nu:
-                scale0 += torch.log(I_n)
+    est_nu = None
+    est_nu1 = None
 
-            I_n = torch.ones(1, dtype=torch.float64).to(device)
-            I_n, I_n1 = 2*i/x*I_n + I_n1, I_n
+    scale = torch.zeros_like(x, dtype=torch.float64, device=device)
+    scale0 = torch.zeros_like(x, dtype=torch.float64, device=device)
+    scale1 = torch.zeros_like(x, dtype=torch.float64, device=device)
 
-        else:
-            I_n, I_n1 = I_n_tem, I_n1_tem
+    for i in range(2 * nu, 0, -1):
+        I_n_tem = 2.0 * i / (x + 1e-20) * I_n + I_n1
+        I_n1_tem = I_n
+
+        # Always rescale: avoids isinf() sync with CPU
+        s = torch.maximum(I_n_tem.abs(), I_n1_tem.abs())
+        s = torch.clamp(s, min=1.0)
+
+        I_n = I_n_tem / s
+        I_n1 = I_n1_tem / s
+
+        log_s = torch.log(s)
+        scale += log_s
+
+        if i >= (nu + 1):
+            scale0 += log_s
+            scale1 += log_s
+        elif i == nu:
+            scale0 += log_s
 
         if i == nu:
-            Estimat_n[0] = I_n1
-        elif i == (nu+1):
-            Estimat_n[1] = I_n1
+            est_nu = I_n1.clone()
+        elif i == (nu + 1):
+            est_nu1 = I_n1.clone()
 
     ive0 = torch.special.i0e(x)
 
-    Estimat_n[0] = torch.log(ive0) + torch.log(Estimat_n[0]) - torch.log(I_n) + scale0 - scale
-    Estimat_n[1] = torch.log(ive0) + torch.log(Estimat_n[1]) - torch.log(I_n) + scale1 - scale
+    est_nu = torch.log(ive0 + eps) + torch.log(est_nu.abs() + eps) - torch.log(I_n.abs() + eps) + scale0 - scale
+    est_nu1 = torch.log(ive0 + eps) + torch.log(est_nu1.abs() + eps) - torch.log(I_n.abs() + eps) + scale1 - scale
 
-    return Estimat_n[0], Estimat_n[1]
+    return est_nu, est_nu1
 
 
 class LogRatioC(torch.autograd.Function):
