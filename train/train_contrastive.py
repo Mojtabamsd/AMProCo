@@ -1197,7 +1197,7 @@ def validate(train_loader, val_loader, model, criterion_ce, config, console):
             'Validation: Prec@1: {:.3f}, Many Prec@1: {:.3f}, Med Prec@1: {:.3f}, Few Prec@1: {:.3f}'.format(acc1, many, med, few))
 
         # all_features = np.concatenate(all_features, axis=0)
-        all_features = np.concatenate(all_features, dim=0).cpu().numpy()
+        all_features = np.concatenate(all_features, axis=0).cpu().numpy()
 
         return acc1, many, med, few, total_labels, all_preds, all_features
 
