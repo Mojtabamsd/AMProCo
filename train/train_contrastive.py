@@ -640,9 +640,9 @@ def train_cifar(rank, world_size, config, console, torch_profile):
                               batch_size=config.training_contrastive.batch_size,
                               sampler=sampler_train,
                               shuffle=(not is_distributed),
-                              num_workers=config.training_contrastive.num_workers,
+                              num_workers=config.training_contrastive.num_workers)
                               # pin_memory=True,
-                              persistent_workers=(config.training_contrastive.num_workers > 0))
+                              # persistent_workers=(config.training_contrastive.num_workers > 0))
 
     val_loader = DataLoader(
         val_dataset, batch_size=config.training_contrastive.batch_size, shuffle=False,
