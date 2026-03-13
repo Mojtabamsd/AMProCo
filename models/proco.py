@@ -64,7 +64,7 @@ class LogRatioC(torch.autograd.Function):
         objects for use in the backward pass using the ctx.save_for_backward method.
         """
 
-        nu, nu1 = miller_recurrence((p/2 - 1).int(), k.double())
+        nu, nu1 = miller_recurrence(int((p/2 - 1)), k.double())
         # nu = log(ive(p/2-1, k)) = log(iv(p/2-1, k)) - k
         # nu1 = log(ive(p/2, k)) = log(iv(p/2, k)) - k
 
@@ -247,7 +247,7 @@ class EstimatorCV():
         self.kappa[self.kappa > 1e5] = 1e5
         self.kappa[self.kappa < 0] = 1e5
 
-        nu, _ = miller_recurrence((self.feature_num // 2 - 1).int(), self.kappa.double())
+        nu, _ = miller_recurrence(self.feature_num // 2 - 1, self.kappa.double())
         # nu, _ = miller_recurrence(torch.tensor(self.feature_num / 2 - 1).int().to(self.kappa.device),
         #                           self.kappa.double())
 
