@@ -247,7 +247,7 @@ class EstimatorCV():
         self.kappa[self.kappa > 1e5] = 1e5
         self.kappa[self.kappa < 0] = 1e5
 
-        nu, _ = miller_recurrence(self.feature_num // 2 - 1, self.kappa.double())
+        nu, _ = miller_recurrence((self.feature_num // 2 - 1).int(), self.kappa.double())
         # nu, _ = miller_recurrence(torch.tensor(self.feature_num / 2 - 1).int().to(self.kappa.device),
         #                           self.kappa.double())
 
