@@ -29,9 +29,9 @@ training_contrastive:
   architecture_type: 'resnet32' # choose 'resnet32'
   batch_size: 256
   accumulation_steps: 1  #for mini batch size --- the training performs like batch_size // accumulation_steps i.e. 256=64*4
-  num_workers: 5
+  num_workers: 2
   gray: True
-  target_size: [32, 32]  #image target size
+  target_size: [256, 256]  #image target size
   padding: True # pad image to preserve aspect ratio
   pre_train: None # True or None
   learning_rate: 0.3
@@ -39,7 +39,7 @@ training_contrastive:
   weight_decay: 0.0004 #weight decay (default: 2e-4)
   cos: True #lr decays by cosine scheduler
   schedule: [10, 20, 30, 40, 50] # learning rate schedule (when to drop lr by 10x)')
-  num_epoch: 200
+  num_epoch: 5
   warmup_epoch: 5 # warmup epochs
   twostage_epoch: 150 # two-stage training epoch for running adaptive multi-prototype stage
   loss: 'proco' # choose 'proco' or 'amproco'
