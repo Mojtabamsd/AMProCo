@@ -1057,6 +1057,11 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
             aggregated_logits = torch.cat(aggregated_logits, dim=0)
             aggregated_logits = aggregated_logits.to(config.device)
 
+            if torch.cuda.is_available():
+                gpu_end.record()
+                torch.cuda.synchronize()
+                gpu_step_times.append(gpu_start.elapsed_time(gpu_end))
+
             ce_loss_all.update(ce_loss.item(), batch_size)
             scl_loss_all.update(scl_loss.item(), batch_size)
 
