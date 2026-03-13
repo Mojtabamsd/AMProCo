@@ -14,8 +14,8 @@ def miller_recurrence(nu, x):
     I_n1 = torch.zeros(1, dtype=torch.float64).to(device)
 
     Estimat_n = [nu, nu+1]
-    scale0 = 0 
-    scale1 = 0 
+    scale0 = 0
+    scale1 = 0
     scale = 0
 
     for i in range(2*nu, 0, -1):
@@ -113,10 +113,10 @@ class EstimatorCV():
         tem = torch.from_numpy(ive(self.feature_num/2 - 1, self.kappa.cpu().numpy().astype(np.float64))).to(self.kappa.device)
         self.logc = torch.log(tem+1e-300) + self.kappa - (self.feature_num/2 - 1) * torch.log(self.kappa+1e-300)
 
-        self.Ave = self.Ave.to(self.device)
-        self.Amount = self.Amount.to(self.device)
-        self.kappa = self.kappa.to(self.device)
-        self.logc = self.logc.to(self.device)
+        # self.Ave = self.Ave.to(self.device)
+        # self.Amount = self.Amount.to(self.device)
+        # self.kappa = self.kappa.to(self.device)
+        # self.logc = self.logc.to(self.device)
 
     def reset(self):
         device = self.Ave.device  # Get the device from the attribute
@@ -138,7 +138,7 @@ class EstimatorCV():
         self.Amount = self.Amount.to(device)
         self.kappa = self.kappa.to(device)
         self.logc = self.logc.to(device)
- 
+
     def update_CV1(self, features, labels):
         device = features.device
 
@@ -247,8 +247,9 @@ class EstimatorCV():
         self.kappa[self.kappa > 1e5] = 1e5
         self.kappa[self.kappa < 0] = 1e5
 
-        nu, _ = miller_recurrence(torch.tensor(self.feature_num / 2 - 1).int().to(self.kappa.device),
-                                  self.kappa.double())
+        nu, _ = miller_recurrence(self.feature_num // 2 - 1, self.kappa.double())
+        # nu, _ = miller_recurrence(torch.tensor(self.feature_num / 2 - 1).int().to(self.kappa.device),
+        #                           self.kappa.double())
 
         self.logc = nu + self.kappa - (self.feature_num/2 - 1) * torch.log(self.kappa+1e-20)
 
@@ -317,18 +318,6 @@ class ProCoLoss(nn.Module):
         tem = tem.unsqueeze(0) + features[:N].unsqueeze(1) / self.temperature
         kappa_new = torch.linalg.norm(tem, dim=2)
 
-        contrast_logits = LogRatioC.apply(kappa_new, torch.tensor(self.estimator.feature_num), logc)
-
+        # contrast_logits = LogRatioC.apply(kappa_new, torch.tensor(self.estimator.feature_num), logc)
+        contrast_logits = LogRatioC.apply(kappa_new, self.estimator.feature_num, logc)
         return contrast_logits
-
-
-
-
-
-
-
-
-
-
-
-

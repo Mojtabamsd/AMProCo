@@ -1050,18 +1050,12 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
                 logits = ce_logits + alpha * contrast_logits
                 loss = lambda_ * ce_loss + alpha * scl_loss
 
-                # Accumulate gradients
                 loss.backward()
                 aggregated_logits.append(logits)
 
             optimizer.step()
             aggregated_logits = torch.cat(aggregated_logits, dim=0)
             aggregated_logits = aggregated_logits.to(config.device)
-
-            if torch.cuda.is_available():
-                gpu_end.record()
-                torch.cuda.synchronize()
-                gpu_step_times.append(gpu_start.elapsed_time(gpu_end))
 
             ce_loss_all.update(ce_loss.item(), batch_size)
             scl_loss_all.update(scl_loss.item(), batch_size)
@@ -1072,58 +1066,9 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
                 prof.step()
     if torch_profile:
         prof.export_chrome_trace(f"trace_epoch_{epoch}.json")
-    # optimizer.zero_grad()
-    # loss.backward()
-    # optimizer.step()
 
     batch_time.update(time.time() - end)
     end = time.time()
-
-        # # for debug
-        # from tools.image import save_img
-        # save_img(images, batch_idx, epoch, training_path/"augmented")
-
-        # if batch_idx % 20 == 0:
-        #     output = ('Epoch: [{0}][{1}/{2}] \t'
-        #               'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-        #               'CE_Loss {ce_loss.val:.4f} ({ce_loss.avg:.4f})\t'
-        #               'SCL_Loss {scl_loss.val:.4f} ({scl_loss.avg:.4f})\t'
-        #               'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-        #         epoch, batch_idx, len(train_loader), batch_time=batch_time,
-        #         ce_loss=ce_loss_all, scl_loss=scl_loss_all, top1=top1, ))  # TODO
-        #     print(output)
-
-        # if epoch == 0:
-        #     prof_result = prof
-        #     if torch.cuda.is_available() and not is_rocm:
-        #         torch.cuda.synchronize()
-
-    # # Access profiler results after context exit (required on NVIDIA)
-    # if epoch == 0 and prof_result is not None and hasattr(prof_result, "key_averages"):
-    #     try:
-    #         sort_by = "cuda_time_total" if (torch.cuda.is_available() and not is_rocm) else "cpu_time_total"
-    #         prof_table = prof_result.key_averages().table(sort_by=sort_by, row_limit=30)
-    #         if not prof_table or not prof_table.strip():
-    #             prof_table = prof_result.key_averages().table(sort_by="self_cpu_time_total", row_limit=30)
-    #         console.info(f"\n--- PyTorch Profiler (CPU/GPU) ---\n{prof_table}")
-    #     except RuntimeError:
-    #         console.info("PyTorch Profiler: results not available (NVIDIA async)")
-
-    # console.info(f"CE loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {ce_loss_all.avg:.4f} ")
-    # console.info(
-    #     f"SCL loss train [{epoch + 1}/{config.training_contrastive.num_epoch}] - Loss: {scl_loss_all.avg:.4f} ")
-    # console.info(f"acc train top1 [{epoch + 1}/{config.training_contrastive.num_epoch}] - Acc: {top1.avg:.4f} ")
-
-    # if torch.cuda.is_available() and gpu_step_times:
-    #     avg_step_ms = sum(gpu_step_times) / len(gpu_step_times)
-    #     total_samples = len(gpu_step_times) * config.training_contrastive.batch_size
-    #     total_time_sec = sum(gpu_step_times) / 1000.0
-    #     throughput = total_samples / total_time_sec if total_time_sec > 0 else 0
-    #     peak_mem_gb = torch.cuda.max_memory_allocated() / 1e9
-    #     console.info(
-    #         f"GPU [epoch {epoch + 1}] - Step: {avg_step_ms:.2f} ms | Peak mem: {peak_mem_gb:.2f} GB | "
-    #         f"Throughput: {throughput:.1f} samples/sec"
-    #     )
 
     return ce_loss_all, scl_loss_all, top1
 
