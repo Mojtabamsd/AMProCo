@@ -582,21 +582,21 @@ def train_cifar(rank, world_size, config, console, torch_profile):
     # Define data transformations
     augmentation_regular = [
         transforms.RandomResizedCrop(config.training_contrastive.target_size[0]),
-        # transforms.RandomHorizontalFlip(),
-        # CIFAR10Policy(),
+        transforms.RandomHorizontalFlip(),
+        CIFAR10Policy(),
         transforms.ToTensor(),
-        # Cutout(n_holes=1, length=16),
-        # transforms.Normalize(
-        #     (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        Cutout(n_holes=1, length=16),
+        transforms.Normalize(
+            (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
         ]
 
     augmentation_sim_cifar = [
         transforms.RandomResizedCrop(size=config.training_contrastive.target_size[0]),
-        # transforms.RandomHorizontalFlip(p=0.5),
-        # transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
-        # transforms.RandomGrayscale(p=0.2),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
+        transforms.RandomGrayscale(p=0.2),
         transforms.ToTensor(),
-        # transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
     ]
 
     transform_train = [transforms.Compose(augmentation_regular),
@@ -640,7 +640,8 @@ def train_cifar(rank, world_size, config, console, torch_profile):
                               batch_size=config.training_contrastive.batch_size,
                               sampler=sampler_train,
                               shuffle=(not is_distributed),
-                              num_workers=config.training_contrastive.num_workers)
+                              num_workers=config.training_contrastive.num_workers,
+                              pin_memory=True)
 
     val_loader = DataLoader(
         val_dataset, batch_size=config.training_contrastive.batch_size, shuffle=False,
@@ -1058,10 +1059,10 @@ def train(epoch, train_loader, model, criterion_ce, criterion_scl, optimizer, co
             aggregated_logits = torch.cat(aggregated_logits, dim=0)
             aggregated_logits = aggregated_logits.to(config.device)
 
-            if torch.cuda.is_available():
-                gpu_end.record()
-                torch.cuda.synchronize()
-                gpu_step_times.append(gpu_start.elapsed_time(gpu_end))
+            # if torch.cuda.is_available():
+            #     gpu_end.record()
+            #     torch.cuda.synchronize()
+            #     gpu_step_times.append(gpu_start.elapsed_time(gpu_end))
 
             ce_loss_all.update(ce_loss.item(), batch_size)
             scl_loss_all.update(scl_loss.item(), batch_size)
