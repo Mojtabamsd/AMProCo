@@ -65,7 +65,7 @@ def read_df(filename):
     return df
 
 save = True
-out_path = r'D:\mojmas\files\Projects\CVPR\plots\results\uvp'
+out_path = r'D:\mojmas\files\Projects\CVPR\plots\results\uvp\test'
 filename = r"prediction_uvp.txt"
 
 df = read_df(filename)
@@ -132,7 +132,7 @@ if save:
 
     # Set class labels around the circle
     ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(feature_names, fontsize=9)
+    ax.set_xticklabels(feature_names, fontsize=14)
     # ax.set_title("Radar Plot: Prototype Distribution in Top-10 Accuracy Runs", size=14, pad=20)
 
     ax.set_rlabel_position(0)
@@ -141,10 +141,10 @@ if save:
     ax.set_yticklabels([])
     ax.set_rlabel_position(0)
 
-    plt.legend(bbox_to_anchor=(1.3, 1.05), loc='upper left')
+    plt.legend(bbox_to_anchor=(1.3, 1.05), loc='upper left', fontsize=14)
     plt.tight_layout()
     # plt.show()
-    out_path_name = out_path + r"\top_5_radar_uvp.png"
+    out_path_name = out_path + r"\top_5_radar_uvp.pdf"
     plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
     plt.close()
 
@@ -176,7 +176,7 @@ if save:
 
     # Set class labels around the circle
     ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(feature_names, fontsize=9)
+    ax.set_xticklabels(feature_names, fontsize=11)
     # ax.set_title("Radar Plot: Prototype Distribution in Top-10 Accuracy Runs", size=14, pad=20)
 
     # Optional: Hide y-axis labels or set radial limits
@@ -247,19 +247,19 @@ if save:
     ax.fill(angles, bot_vals, color='red', alpha=0.1)
 
     ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(feature_names, fontsize=9)
+    ax.set_xticklabels(feature_names, fontsize=11)
     ax.set_yticklabels([])
     # ax.set_title("Radar Plot: Avg Prototype Distribution\nTop vs. Bottom Accuracy Runs", size=13, pad=20)
 
     yticks = ax.get_yticks()
     yticklabels = [f'{y:.1f}' for y in yticks]
-    ax.set_yticklabels(yticklabels, fontsize=9)
+    ax.set_yticklabels(yticklabels, fontsize=14)
 
-    plt.legend(loc='upper right', bbox_to_anchor=(1.2, 1.1))
+    plt.legend(loc='upper right', bbox_to_anchor=(1.2, 1.1), fontsize=14)
     plt.tight_layout()
     # plt.show()
 
-    out_path_name = out_path + r"\top_vs_bottom_radar_uvp.png"
+    out_path_name = out_path + r"\top_vs_bottom_radar_uvp.pdf"
     plt.savefig(out_path_name, dpi=600, bbox_inches='tight')
     plt.close()
 
