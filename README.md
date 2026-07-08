@@ -15,7 +15,7 @@ National Oceanography Centre · Alan Turing Institute · University of Southampt
 </div>
 
 <p align="center">
-  <img src="assets/figure_git.png" alt="AMProCo overview" width="850">
+  <img src="assets/figure_git.png" alt="AMProCo overview" width="650">
 </p>
 
 <p align="center">
@@ -55,7 +55,7 @@ On **CIFAR-100-LT**, AMProCo improves top-1 accuracy by **+1–2 pp** over singl
 macro-F1 by **up to +5.7 pp**, with the largest gains on few-shot (tail) categories.
 
 <p align="center">
-  <img src="assets/pipeline.png" alt="Two-stage training pipeline" width="850">
+  <img src="assets/pipeline.jpg" alt="Two-stage training pipeline" width="650">
 </p>
 
 <p align="center">
